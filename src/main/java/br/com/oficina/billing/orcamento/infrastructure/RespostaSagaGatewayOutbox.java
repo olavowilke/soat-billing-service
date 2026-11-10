@@ -88,7 +88,8 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
     @Override
     public void estornoFalhou(UUID sagaId, UUID osId, UUID pagamentoId, String motivo) {
         gravar("EstornoFalhou", sagaId, osId, p -> {
-            p.put("pagamentoId", pagamentoId.toString());
+            // Nulo quando a OS nao tem orcamento nem pagamento.
+            p.put("pagamentoId", pagamentoId == null ? null : pagamentoId.toString());
             p.put("motivo", motivo);
         });
     }

@@ -1,5 +1,9 @@
 package br.com.oficina.billing.shared.infrastructure.mensageria;
 
+import br.com.oficina.billing.orcamento.entities.ItemOrcamento;
+import br.com.oficina.billing.orcamento.entities.Orcamento;
+import br.com.oficina.billing.orcamento.entities.TipoItem;
+import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.shared.BillingIT;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -18,6 +22,7 @@ import software.amazon.awssdk.services.sqs.model.Message;
 import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -28,6 +33,11 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * Testes do listener de comandos com Postgres e LocalStack. O intervalo do relay e de 1 hora no perfil de teste:
@@ -44,6 +54,8 @@ class ComandosListenerIT extends BillingIT {
     private JdbcTemplate jdbc;
     @Autowired
     private OutboxRelay relay;
+    @Autowired
+    private OrcamentoGateway orcamentos;
 
     private ListAppender<ILoggingEvent> logs;
     private List<Logger> loggers;
@@ -256,6 +268,101 @@ class ComandosListenerIT extends BillingIT {
                         && e.getFormattedMessage().contains("Mensagem invalida")));
         assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
                 Integer.class, messageId)).isZero();
+    }
+
+    @Test
+    void estornoComSucessoGeraPagamentoEstornado() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-1");
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("PagamentoEstornado");
+        assertThat(jdbc.queryForObject("select status from orcamentos where os_id = ?", String.class, os))
+                .isEqualTo("ESTORNADO");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+    }
+
+    @Test
+    void tresFalhasDoProvedorGeramEstornoFalhouUmaVezETentativasPersistem() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-2");
+        doThrow(new IllegalStateException("provedor fora")).when(pagamentoGateway).estornar(anyString(), any());
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(30)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select status from orcamentos where os_id = ?", String.class, os))
+                .isEqualTo("PAGO");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        verify(pagamentoGateway, times(3)).estornar(anyString(), any());
+    }
+
+    @Test
+    void falhaDoProvedorSeguidaDeSucessoEstornaNaSegundaEntrega() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-3");
+        doThrow(new IllegalStateException("provedor fora")).doNothing().when(pagamentoGateway)
+                .estornar(anyString(), any());
+
+        enviar(comando(UUID.randomUUID(), saga, os, "EstornarPagamento", "corr-" + saga, motivo()),
+                "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("PagamentoEstornado");
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(1);
+    }
+
+    @Test
+    void estornoDeOsSemOrcamentoGeraEstornoFalhouEConfirmaMensagem() throws Exception {
+        var saga = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+
+        enviar(comando(messageId, saga, UUID.randomUUID(), "EstornarPagamento", "corr-" + saga, motivo()),
+                "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+    }
+
+    private Map<String, Object> motivo() {
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("motivo", "OS cancelada");
+        return payload;
+    }
+
+    private void criarOrcamentoPago(UUID os, String mpPaymentId) {
+        var agora = Instant.now();
+        var item = new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal("350.00"));
+        orcamentos.salvar(Orcamento.gerar(os, UUID.randomUUID(), UUID.randomUUID(), List.of(item), agora));
+        var o = orcamentos.buscarPorOsId(os).orElseThrow();
+        o.aprovar(agora, Duration.ofMinutes(30));
+        orcamentos.salvar(o);
+        o = orcamentos.buscarPorOsId(os).orElseThrow();
+        o.confirmarPagamento(mpPaymentId, agora);
+        orcamentos.salvar(o);
     }
 
     private Map<String, Object> itensValidos() {

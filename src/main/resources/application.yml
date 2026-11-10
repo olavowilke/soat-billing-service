@@ -63,6 +63,9 @@ billing:
     modo: ${BILLING_MERCADOPAGO_MODO:fake}
     access-token: ${BILLING_MERCADOPAGO_ACCESS_TOKEN:}
     webhook-secret: ${BILLING_MERCADOPAGO_WEBHOOK_SECRET:}
+  fake:
+    # Only with modo=fake: makes the fake refund fail (tests the retry path).
+    falhar-estorno: ${BILLING_FAKE_FALHAR_ESTORNO:false}
   url-publica: ${BILLING_URL_PUBLICA:http://localhost:8080}
   pagamento:
     prazo: ${BILLING_PAGAMENTO_PRAZO:PT30M}

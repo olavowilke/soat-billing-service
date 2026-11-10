@@ -1,5 +1,6 @@
 package br.com.oficina.billing.shared;
 
+import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import io.awspring.cloud.sqs.operations.SqsTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -31,6 +32,10 @@ public abstract class BillingIT {
     /** Spy no template SQS: os testes do relay forcam falha de envio. Fica aqui para todos os ITs usarem o mesmo contexto. */
     @MockitoSpyBean
     protected SqsTemplate sqsTemplate;
+
+    /** Spy no provedor fake: os testes de estorno forcam falha. Fica aqui pelo mesmo motivo do spy acima. */
+    @MockitoSpyBean
+    protected PagamentoGateway pagamentoGateway;
 
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("billing_test")

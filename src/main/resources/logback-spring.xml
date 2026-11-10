@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+
+    <!-- Perfis dev/test: saída legível no console, com o correlationId entre
+         colchetes para facilitar o acompanhamento manual durante o desenvolvimento. -->
+    <springProfile name="dev,test">
+        <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [%X{correlationId}] %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+        </root>
+    </springProfile>
+
+    <!-- Perfis homolog/prod: log estruturado em JSON (um objeto por linha),
+         exigido pelo enunciado da Fase 3 ("logs estruturados (JSON), incluindo
+         correlação entre requisições"). O correlationId e o clienteId são
+         lidos do MDC, preenchidos pelo CorrelationIdFilter a partir dos
+         cabeçalhos que o API Gateway injeta em cada requisição encaminhada
+         ao cluster (ver lambda-auth/terraform/apigateway.tf).
+
+         Não usamos aqui nenhum provider específico do New Relic: quem
+         encaminha estas linhas JSON ao New Relic é o DaemonSet Fluent Bit do
+         bundle Helm nri-bundle (`newrelic-logging.enabled`, ver
+         infra-k8s/terraform/newrelic.tf), que lê o stdout do container
+         direto do nó — não o agente Java (newrelic.jar, -javaagent). Este
+         projeto não liga NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED
+         (ver comentário em Dockerfile/entrypoint.sh), então o próprio
+         agente não encaminha/decora log nenhum; a correlação com
+         trace.id/span.id de APM, quando existir, vem da instrumentação de
+         bytecode do agente para chamadas HTTP/JDBC, não deste encoder. -->
+    <springProfile name="homolog,prod">
+        <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <includeMdcKeyName>correlationId</includeMdcKeyName>
+                <includeMdcKeyName>clienteId</includeMdcKeyName>
+                <customFields>{"service":"billing-service","environment":"${ENVIRONMENT:-unknown}"}</customFields>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="JSON"/>
+        </root>
+    </springProfile>
+
+    <!-- Fallback de segurança: qualquer perfil ativo que não seja um dos
+         quatro acima (ex.: typo num overlay futuro, tipo "hommolog") caía
+         sem NENHUM appender configurado — perdendo toda linha de log em
+         silêncio, sem erro nenhum no start-up. Este bloco garante que
+         sempre existe pelo menos uma saída de log, mesmo em um perfil
+         desconhecido. -->
+    <springProfile name="!dev &amp; !test &amp; !homolog &amp; !prod">
+        <appender name="CONSOLE_FALLBACK" class="ch.qos.logback.core.ConsoleAppender">
+            <encoder>
+                <pattern>%d{HH:mm:ss.SSS} %-5level [%thread] [%X{correlationId}] %logger{36} - %msg%n</pattern>
+            </encoder>
+        </appender>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE_FALLBACK"/>
+        </root>
+    </springProfile>
+
+</configuration>

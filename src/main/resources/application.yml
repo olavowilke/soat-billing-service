@@ -1,0 +1,73 @@
+spring:
+  application:
+    name: billing-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/billing_db}
+    username: ${DB_USERNAME:billing}
+    password: ${DB_PASSWORD:billing}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # V1 arrives in Task 3. Until then the folder has no files.
+    fail-on-missing-locations: false
+  cloud:
+    aws:
+      region:
+        static: ${AWS_REGION:us-east-1}
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    context-path: /api/billing
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true
+  health:
+    liveness-state:
+      enabled: true
+    readiness-state:
+      enabled: true
+  metrics:
+    tags:
+      application: billing-service
+
+billing:
+  filas:
+    comandos: ${BILLING_FILAS_COMANDOS:oficina-homolog-billing-commands}
+    respostas: ${BILLING_FILAS_RESPOSTAS:oficina-homolog-os-saga-replies}
+  mercadopago:
+    # fake (default) or real. Sandbox only.
+    modo: ${BILLING_MERCADOPAGO_MODO:fake}
+    access-token: ${BILLING_MERCADOPAGO_ACCESS_TOKEN:}
+    webhook-secret: ${BILLING_MERCADOPAGO_WEBHOOK_SECRET:}
+  url-publica: ${BILLING_URL_PUBLICA:http://localhost:8080}
+  pagamento:
+    prazo: ${BILLING_PAGAMENTO_PRAZO:PT30M}
+
+logging:
+  level:
+    br.com.oficina: INFO
+    org.hibernate.SQL: WARN

@@ -80,7 +80,7 @@ public class MercadoPagoPagamentoGateway implements PagamentoGateway {
     @Override
     public void estornar(String mpPaymentId, UUID pagamentoId) {
         chamar("estornar pagamento", () -> http.post().uri("/v1/payments/{id}/refunds", mpPaymentId)
-                .header("X-Idempotency-Key", pagamentoId.toString())
+                .header("X-Idempotency-Key", pagamentoId + "-" + mpPaymentId)
                 .contentType(MediaType.APPLICATION_JSON).body(Map.of()).retrieve().toBodilessEntity());
     }
 

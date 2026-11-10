@@ -3,6 +3,7 @@ package br.com.oficina.billing.orcamento.usecases;
 import br.com.oficina.billing.orcamento.entities.Orcamento;
 import br.com.oficina.billing.orcamento.entities.StatusOrcamento;
 import br.com.oficina.billing.orcamento.entities.StatusPagamento;
+import br.com.oficina.billing.orcamento.gateways.EstornoAvulsoGateway;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
@@ -29,6 +30,10 @@ import static br.com.oficina.billing.orcamento.usecases.ResultadoProcessamento.I
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -42,8 +47,9 @@ class ProcessarResultadoPagamentoUseCaseTest {
     private final OrcamentoGateway orcamentos = mock(OrcamentoGateway.class);
     private final PagamentoGateway provedor = mock(PagamentoGateway.class);
     private final RespostaSagaGateway respostas = mock(RespostaSagaGateway.class);
+    private final EstornoAvulsoGateway avulsos = mock(EstornoAvulsoGateway.class);
     private final ProcessarResultadoPagamentoUseCase useCase = new ProcessarResultadoPagamentoUseCase(orcamentos,
-            provedor, respostas, Clock.fixed(AGORA.plusSeconds(60), ZoneOffset.UTC));
+            provedor, respostas, avulsos, Clock.fixed(AGORA.plusSeconds(60), ZoneOffset.UTC));
 
     private final Logger logger = (Logger) LoggerFactory.getLogger(ProcessarResultadoPagamentoUseCase.class);
     private final ListAppender<ILoggingEvent> logs = new ListAppender<>();
@@ -135,12 +141,81 @@ class ProcessarResultadoPagamentoUseCaseTest {
         assertThat(useCase.execute(pagId(o), MP_ID, SituacaoPagamentoExterno.APROVADO)).isEqualTo(ESTORNADO);
 
         verify(provedor).estornar(MP_ID, pagId(o));
+        verify(avulsos).registrar(eq(pagId(o)), eq(MP_ID), anyString(), eq(true), isNull());
         verify(orcamentos, never()).salvar(any());
         verifyNoInteractions(respostas);
         assertThat(logs.list).anySatisfy(e -> {
             assertThat(e.getLevel()).isEqualTo(Level.WARN);
             assertThat(e.getFormattedMessage()).contains(pagId(o).toString());
         });
+    }
+
+    @Test
+    void aprovadoDepoisDeRejeitadoEstornaSemResponder() {
+        Orcamento o = aprovado();
+        useCase.execute(pagId(o), null, SituacaoPagamentoExterno.REJEITADO);
+
+        assertThat(useCase.execute(pagId(o), "mp-2", SituacaoPagamentoExterno.APROVADO)).isEqualTo(ESTORNADO);
+
+        verify(provedor).estornar("mp-2", pagId(o));
+        verify(avulsos).registrar(eq(pagId(o)), eq("mp-2"), anyString(), eq(true), isNull());
+        verify(respostas, never()).pagamentoConfirmado(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void doisPagamentosAprovadosComIdsDiferentesEstornaOSegundo() {
+        Orcamento o = aprovado();
+        useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO);
+
+        assertThat(useCase.execute(pagId(o), "mp-2", SituacaoPagamentoExterno.APROVADO)).isEqualTo(ESTORNADO);
+
+        verify(provedor).estornar("mp-2", pagId(o));
+        verify(provedor, never()).estornar(eq("mp-1"), any());
+        verify(respostas).pagamentoConfirmado(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void aprovadoDepoisDeEstornadoComIdDiferenteEstorna() {
+        Orcamento o = aprovado();
+        useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO);
+        o.estornar(AGORA.plusSeconds(120));
+
+        assertThat(useCase.execute(pagId(o), "mp-2", SituacaoPagamentoExterno.APROVADO)).isEqualTo(ESTORNADO);
+
+        verify(provedor).estornar("mp-2", pagId(o));
+    }
+
+    @Test
+    void mesmoIdAprovadoDuasVezesNaoEstorna() {
+        Orcamento o = aprovado();
+        useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO);
+        useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO);
+
+        verifyNoInteractions(provedor, avulsos);
+    }
+
+    @Test
+    void mesmoIdAprovadoDepoisDeEstornadoNaoEstornaDeNovo() {
+        Orcamento o = aprovado();
+        useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO);
+        o.estornar(AGORA.plusSeconds(120));
+
+        assertThat(useCase.execute(pagId(o), "mp-1", SituacaoPagamentoExterno.APROVADO)).isEqualTo(IGNORADO);
+
+        verifyNoInteractions(provedor, avulsos);
+    }
+
+    @Test
+    void falhaDoProvedorNoEstornoTardioEhRegistradaEPropagada() {
+        Orcamento o = aprovado();
+        o.expirarPagamento(AGORA.plusSeconds(30));
+        doThrow(new IllegalStateException("provedor fora")).when(provedor).estornar(MP_ID, pagId(o));
+
+        assertThatThrownBy(() -> useCase.execute(pagId(o), MP_ID, SituacaoPagamentoExterno.APROVADO))
+                .isInstanceOf(IllegalStateException.class);
+
+        verify(avulsos).registrar(eq(pagId(o)), eq(MP_ID), anyString(), eq(false), eq("provedor fora"));
+        verifyNoInteractions(respostas);
     }
 
     @Test

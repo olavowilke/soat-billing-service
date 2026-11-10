@@ -10,6 +10,6 @@ public interface PagamentoGateway {
 
     ResultadoConsultaPagamento consultar(String mpPaymentId);
 
-    /** Lanca excecao se o provedor nao conseguir estornar. O pagamentoId serve de chave de idempotencia. */
+    /** Lanca excecao se o provedor nao conseguir estornar. A chave de idempotencia junta pagamentoId e mpPaymentId: dois pagamentos do provedor no mesmo pagamento nao viram um estorno so. */
     void estornar(String mpPaymentId, UUID pagamentoId);
 }

@@ -377,6 +377,27 @@ class OrcamentoControllerIT extends BillingIT {
     }
 
     @Test
+    void fakePaginaDePagamentoMostraValorStatusEFormularios() {
+        Orcamento o = aprovado();
+        UUID pagamentoId = o.getPagamento().orElseThrow().getId();
+
+        var resposta = chamar(HttpMethod.GET, "/public/fake-pagamentos/" + pagamentoId, null, String.class);
+
+        assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(resposta.getHeaders().getContentType().toString()).startsWith("text/html");
+        assertThat(resposta.getBody()).contains("PENDENTE").contains("350.00")
+                .contains("method=\"post\"").contains("action=\"" + pagamentoId + "/aprovar\"")
+                .contains("action=\"" + pagamentoId + "/rejeitar\"");
+    }
+
+    @Test
+    void fakePaginaDePagamentoDesconhecidoRetorna404() {
+        var resposta = chamar(HttpMethod.GET, "/public/fake-pagamentos/" + UUID.randomUUID(), null, String.class);
+
+        assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void fakePagamentoDesconhecidoRetorna404ComWarn(CapturedOutput saida) {
         UUID desconhecido = UUID.randomUUID();
 

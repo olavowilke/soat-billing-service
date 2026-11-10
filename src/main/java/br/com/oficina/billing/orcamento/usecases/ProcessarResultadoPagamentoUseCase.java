@@ -3,6 +3,7 @@ package br.com.oficina.billing.orcamento.usecases;
 import br.com.oficina.billing.orcamento.entities.Orcamento;
 import br.com.oficina.billing.orcamento.entities.Pagamento;
 import br.com.oficina.billing.orcamento.entities.StatusPagamento;
+import br.com.oficina.billing.orcamento.gateways.EstornoAvulsoGateway;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
@@ -22,7 +23,10 @@ import java.util.UUID;
  * <li>Pagamento PENDENTE + APROVADO: confirma e responde PagamentoConfirmado.</li>
  * <li>Pagamento PENDENTE + REJEITADO: rejeita e responde PagamentoFalhou "REJEITADO".</li>
  * <li>Pagamento ja APROVADO ou REJEITADO: repeticao, nada a fazer.</li>
- * <li>Pagamento EXPIRADO + APROVADO: estorna na hora, sem resposta a saga (a saga ja foi cancelada).</li>
+ * <li>Pagamento nao PENDENTE + APROVADO, exceto o mesmo mpPaymentId ja confirmado: estorna na hora, sem
+ * resposta a saga, e audita em estornos_avulsos. Se o provedor falhar, audita e a excecao sobe, para o
+ * webhook responder erro e o provedor repetir.</li>
+ * <li>Pagamento APROVADO ou ESTORNADO + APROVADO com o mesmo mpPaymentId: webhook repetido, nada a fazer.</li>
  * <li>Pagamento desconhecido: WARN e nada a fazer.</li>
  * </ul>
  */
@@ -33,13 +37,15 @@ public class ProcessarResultadoPagamentoUseCase {
     private final OrcamentoGateway orcamentos;
     private final PagamentoGateway provedor;
     private final RespostaSagaGateway respostas;
+    private final EstornoAvulsoGateway avulsos;
     private final Clock clock;
 
     public ProcessarResultadoPagamentoUseCase(OrcamentoGateway orcamentos, PagamentoGateway provedor,
-            RespostaSagaGateway respostas, Clock clock) {
+            RespostaSagaGateway respostas, EstornoAvulsoGateway avulsos, Clock clock) {
         this.orcamentos = orcamentos;
         this.provedor = provedor;
         this.respostas = respostas;
+        this.avulsos = avulsos;
         this.clock = clock;
     }
 
@@ -63,15 +69,31 @@ public class ProcessarResultadoPagamentoUseCase {
         if (status == StatusPagamento.PENDENTE) {
             return aplicar(orcamento, pagamento, mpPaymentId, situacao);
         }
-        if (status == StatusPagamento.EXPIRADO && situacao == SituacaoPagamentoExterno.APROVADO) {
-            log.warn("Pagamento aprovado depois de expirar, estornando: pagamentoId={}, mpPaymentId={}",
+        if (situacao == SituacaoPagamentoExterno.APROVADO && !duplicadoDoMesmoPagamento(pagamento, mpPaymentId)) {
+            log.warn("Pagamento aprovado com pagamento em {}, estornando: pagamentoId={}, mpPaymentId={}", status,
                     pagamentoId, mpPaymentId);
-            provedor.estornar(mpPaymentId, pagamentoId);
+            estornarAvulso(pagamentoId, mpPaymentId, "APROVADO_COM_PAGAMENTO_" + status);
             return ResultadoProcessamento.ESTORNADO;
         }
         log.info("Resultado repetido ou tardio ignorado: pagamentoId={}, status={}, situacao={}", pagamentoId,
                 status, situacao);
         return ResultadoProcessamento.IGNORADO;
+    }
+
+    private static boolean duplicadoDoMesmoPagamento(Pagamento pagamento, String mpPaymentId) {
+        boolean confirmado = pagamento.getStatus() == StatusPagamento.APROVADO
+                || pagamento.getStatus() == StatusPagamento.ESTORNADO;
+        return confirmado && mpPaymentId.equals(pagamento.getMpPaymentId());
+    }
+
+    private void estornarAvulso(UUID pagamentoId, String mpPaymentId, String motivo) {
+        try {
+            provedor.estornar(mpPaymentId, pagamentoId);
+        } catch (RuntimeException e) {
+            avulsos.registrar(pagamentoId, mpPaymentId, motivo, false, e.getMessage());
+            throw e;
+        }
+        avulsos.registrar(pagamentoId, mpPaymentId, motivo, true, null);
     }
 
     private ResultadoProcessamento aplicar(Orcamento orcamento, Pagamento pagamento, String mpPaymentId,

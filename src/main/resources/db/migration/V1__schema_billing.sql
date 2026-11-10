@@ -60,3 +60,15 @@ CREATE TABLE mensagens_processadas (
     message_id    UUID        PRIMARY KEY,
     processada_em TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE estornos_avulsos (
+    id            UUID         PRIMARY KEY,
+    pagamento_id  UUID         NOT NULL,
+    mp_payment_id VARCHAR(100) NOT NULL,
+    motivo        VARCHAR(50)  NOT NULL,
+    sucesso       BOOLEAN      NOT NULL,
+    erro          VARCHAR(300),
+    criado_em     TIMESTAMPTZ  NOT NULL
+);
+
+CREATE INDEX idx_estornos_avulsos_pagamento ON estornos_avulsos (pagamento_id);

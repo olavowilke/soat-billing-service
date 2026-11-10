@@ -94,7 +94,7 @@ public class EstornarPagamentoUseCase {
         orcamentos.salvar(orcamento);
         int tentativas = pagamento.getTentativasEstorno();
         // Se o contador do SQS faltar (0), as tentativas gravadas servem de piso.
-        int entregas = Math.max(receiveCount, tentativas);
+        int entregas = receiveCount > 0 ? receiveCount : tentativas;
         if (entregas < maxEntregas) {
             log.warn("Estorno falhou no provedor, entrega {} de {}: osId={}, erro={}", entregas,
                     maxEntregas, osId, erro.getMessage());

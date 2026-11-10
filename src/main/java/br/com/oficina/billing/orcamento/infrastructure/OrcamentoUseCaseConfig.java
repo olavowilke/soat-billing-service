@@ -1,11 +1,13 @@
 package br.com.oficina.billing.orcamento.infrastructure;
 
+import br.com.oficina.billing.orcamento.gateways.EstornoAvulsoGateway;
 import br.com.oficina.billing.orcamento.gateways.ExecutorTransacional;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
 import br.com.oficina.billing.orcamento.usecases.AprovarOrcamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.BuscarOrcamentoUseCase;
+import br.com.oficina.billing.orcamento.usecases.BuscarPagamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.EstornarPagamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.ExpirarPagamentosUseCase;
 import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoUseCase;
@@ -53,9 +55,14 @@ class OrcamentoUseCaseConfig {
     }
 
     @Bean
+    BuscarPagamentoUseCase buscarPagamentoUseCase(OrcamentoGateway orcamentos) {
+        return new BuscarPagamentoUseCase(orcamentos);
+    }
+
+    @Bean
     ProcessarResultadoPagamentoUseCase processarResultadoPagamentoUseCase(OrcamentoGateway orcamentos,
-            PagamentoGateway pagamentos, RespostaSagaGateway respostas, Clock clock) {
-        return new ProcessarResultadoPagamentoUseCase(orcamentos, pagamentos, respostas, clock);
+            PagamentoGateway pagamentos, RespostaSagaGateway respostas, EstornoAvulsoGateway avulsos, Clock clock) {
+        return new ProcessarResultadoPagamentoUseCase(orcamentos, pagamentos, respostas, avulsos, clock);
     }
 
     @Bean

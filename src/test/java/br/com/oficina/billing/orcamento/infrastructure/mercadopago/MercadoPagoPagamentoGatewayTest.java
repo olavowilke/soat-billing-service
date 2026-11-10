@@ -160,7 +160,7 @@ class MercadoPagoPagamentoGatewayTest {
         gateway(true).estornar("987", PAGAMENTO);
 
         mp.verify(postRequestedFor(urlEqualTo("/v1/payments/987/refunds"))
-                .withHeader("X-Idempotency-Key", equalTo(PAGAMENTO.toString()))
+                .withHeader("X-Idempotency-Key", equalTo(PAGAMENTO + "-987"))
                 .withHeader("Authorization", equalTo("Bearer " + TOKEN)));
     }
 

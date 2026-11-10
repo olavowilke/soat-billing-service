@@ -196,7 +196,7 @@ class ExpiracaoPagamentosIT extends BillingIT {
         verify(pagamentoGateway).estornar("mp-tardio", pagId(o));
         assertThat(logsProcessar.list).anySatisfy(e -> {
             assertThat(e.getLevel()).isEqualTo(Level.WARN);
-            assertThat(e.getFormattedMessage()).contains("depois de expirar").contains("mp-tardio");
+            assertThat(e.getFormattedMessage()).contains("EXPIRADO").contains("mp-tardio");
         });
         assertThat(tiposNaOutbox(o)).containsExactly("PagamentoFalhou");
         assertThat(recarregar(o).getStatus()).isEqualTo(StatusOrcamento.CANCELADO);

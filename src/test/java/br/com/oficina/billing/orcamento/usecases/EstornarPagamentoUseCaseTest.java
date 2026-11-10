@@ -215,4 +215,20 @@ class EstornarPagamentoUseCaseTest {
 
         assertThat(useCase.execute(SAGA, CORR_COMANDO, OS, 3)).isEqualTo(ResultadoEstorno.ESTORNADO);
     }
+
+    @Test
+    void novaTentativaDoOperadorComTentativasAcumuladasNaoDesisteNaPrimeiraEntrega() {
+        var o = pago("mp-1");
+        var pagamento = o.getPagamento().orElseThrow();
+        pagamento.registrarFalhaEstorno();
+        pagamento.registrarFalhaEstorno();
+        dado(o);
+        doThrow(new IllegalStateException("provedor fora")).when(pagamentos).estornar(anyString(), any());
+
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
+
+        assertThat(pagamento.getTentativasEstorno()).isEqualTo(3);
+        assertThat(r).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
+        verify(respostas, never()).estornoFalhou(any(), any(), any(), any(), anyString());
+    }
 }

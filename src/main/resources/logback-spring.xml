@@ -37,6 +37,7 @@
             <encoder class="net.logstash.logback.encoder.LogstashEncoder">
                 <includeMdcKeyName>correlationId</includeMdcKeyName>
                 <includeMdcKeyName>clienteId</includeMdcKeyName>
+                <includeMdcKeyName>sagaId</includeMdcKeyName>
                 <customFields>{"service":"billing-service","environment":"${ENVIRONMENT:-unknown}"}</customFields>
             </encoder>
         </appender>

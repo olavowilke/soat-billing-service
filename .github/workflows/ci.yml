@@ -51,6 +51,63 @@ jobs:
           path: target/site/jacoco/
           retention-days: 7
 
+  owasp:
+    name: owasp
+    runs-on: ubuntu-latest
+    env:
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+    steps:
+      - name: Aviso sem chave NVD
+        if: env.NVD_API_KEY == ''
+        run: 'echo "NVD_API_KEY ausente: OWASP pulado"'
+
+      - uses: actions/checkout@v4
+        if: env.NVD_API_KEY != ''
+
+      - name: Set up Java 21
+        if: env.NVD_API_KEY != ''
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Semana do cache NVD
+        if: env.NVD_API_KEY != ''
+        id: week
+        run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Restaurar cache dos dados NVD
+        if: env.NVD_API_KEY != ''
+        id: nvd-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ steps.week.outputs.week }}
+          restore-keys: nvd-
+
+      - name: OWASP dependency-check
+        if: env.NVD_API_KEY != ''
+        run: >
+          mvn -B --no-transfer-progress -s settings.xml
+          org.owasp:dependency-check-maven:check
+          -DnvdApiKeyEnvironmentVariable=NVD_API_KEY
+
+      - name: Salvar cache dos dados NVD
+        if: always() && env.NVD_API_KEY != '' && steps.nvd-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ steps.week.outputs.week }}
+
+      - name: Upload relatorio OWASP
+        if: always() && env.NVD_API_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-report
+          path: target/dependency-check/
+          retention-days: 7
+
   terraform-validate:
     name: Terraform fmt e validate
     runs-on: ubuntu-latest

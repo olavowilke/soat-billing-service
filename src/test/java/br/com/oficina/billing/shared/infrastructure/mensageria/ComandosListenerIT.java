@@ -1,0 +1,471 @@
+package br.com.oficina.billing.shared.infrastructure.mensageria;
+
+import br.com.oficina.billing.orcamento.entities.ItemOrcamento;
+import br.com.oficina.billing.orcamento.entities.Orcamento;
+import br.com.oficina.billing.orcamento.entities.TipoItem;
+import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
+import br.com.oficina.billing.orcamento.usecases.EstornarPagamentoUseCase;
+import br.com.oficina.billing.shared.BillingIT;
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import software.amazon.awssdk.services.sqs.SqsAsyncClient;
+import software.amazon.awssdk.services.sqs.model.Message;
+import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
+import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
+
+import java.math.BigDecimal;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+
+/**
+ * Testes do listener de comandos com Postgres e LocalStack. O intervalo do relay e de 1 hora no perfil de teste:
+ * o teste de ponta a ponta chama {@code enviarPendentes()} na mesma thread, como o OutboxRelayIT.
+ * Os ERROR esperados vao para um appender do teste e saem do console.
+ */
+class ComandosListenerIT extends BillingIT {
+
+    @Autowired
+    private SqsAsyncClient sqs;
+    @Autowired
+    private ObjectMapper mapper;
+    @Autowired
+    private JdbcTemplate jdbc;
+    @Autowired
+    private OutboxRelay relay;
+    @Autowired
+    private OrcamentoGateway orcamentos;
+
+    private ListAppender<ILoggingEvent> logs;
+    private List<Logger> loggers;
+
+    @BeforeEach
+    void preparar() {
+        jdbc.update("delete from outbox");
+        loggers = List.of((Logger) LoggerFactory.getLogger(ComandosListener.class),
+                (Logger) LoggerFactory.getLogger(EstornarPagamentoUseCase.class),
+                (Logger) LoggerFactory.getLogger(
+                        "io.awspring.cloud.sqs.listener.sink.AbstractMessageProcessingPipelineSink"));
+        logs = new ListAppender<>();
+        logs.start();
+        loggers.forEach(l -> {
+            l.addAppender(logs);
+            l.setAdditive(false);
+        });
+    }
+
+    @AfterEach
+    void soltar() {
+        // Mensagem rejeitada volta 3 vezes antes da DLQ. Espera isso acabar para os ERROR ficarem no appender.
+        aguardarFilaVazia();
+        loggers.forEach(l -> {
+            l.detachAppender(logs);
+            l.setAdditive(true);
+        });
+        jdbc.update("delete from outbox");
+    }
+
+    @Test
+    void mesmaMensagemDuasVezesGeraUmaLinhaNoOutbox() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var corpo = comando(UUID.randomUUID(), saga, os, "GerarOrcamento", "corr-" + saga, itensValidos());
+
+        enviar(corpo, "GerarOrcamento");
+        enviar(corpo, "GerarOrcamento");
+
+        aguardarFilaVazia();
+        assertThat(linhasOutbox(saga)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isEqualTo(1);
+    }
+
+    @Test
+    void comandoGeraRespostaNaFila() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+
+        enviar(comando(UUID.randomUUID(), saga, os, "GerarOrcamento", "corr-" + saga, itensValidos()),
+                "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        relay.enviarPendentes();
+
+        Message resposta = aguardarResposta(os);
+        assertThat(resposta.messageAttributes().get("type").stringValue()).isEqualTo("OrcamentoGerado");
+        assertThat(resposta.messageAttributes().get("correlationId").stringValue()).isEqualTo("corr-" + saga);
+        JsonNode envelope = mapper.readTree(resposta.body());
+        assertThat(envelope.get("sagaId").asText()).isEqualTo(saga.toString());
+        assertThat(envelope.get("payload").get("valorTotal").asText()).isEqualTo("350.00");
+        var orcamentoId = jdbc.queryForObject("select id from orcamentos where os_id = ?", UUID.class, os);
+        assertThat(envelope.get("payload").get("orcamentoId").asText()).isEqualTo(orcamentoId.toString());
+    }
+
+    @Test
+    void itensVaziosGeramOrcamentoFalhou() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("clienteId", UUID.randomUUID());
+        payload.put("itens", List.of());
+
+        enviar(mapper.writeValueAsString(envelope(UUID.randomUUID(), saga, os, "GerarOrcamento", "corr-" + saga,
+                payload)), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoFalhou");
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isZero();
+    }
+
+    @Test
+    void comandoSemCorrelationIdGeraRespostaComCorrelationIdNaoVazio() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+
+        enviar(comando(UUID.randomUUID(), saga, os, "GerarOrcamento", "", itensValidos()), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        relay.enviarPendentes();
+
+        Message resposta = aguardarResposta(os);
+        assertThat(resposta.messageAttributes().get("correlationId").stringValue()).isNotBlank();
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class, saga))
+                .isNotBlank();
+    }
+
+    @Test
+    void tipoDesconhecidoNaoConfirmaNemRegistra() throws Exception {
+        var saga = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+
+        enviar(comando(messageId, saga, UUID.randomUUID(), "TipoQueNaoExiste", "corr-" + saga, itensValidos()),
+                "TipoQueNaoExiste");
+
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                        && e.getFormattedMessage().contains("TipoQueNaoExiste")));
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isZero();
+        assertThat(linhasOutbox(saga)).isZero();
+    }
+
+    @Test
+    void mensagemInvalidaLogaErroENaoDerrubaListener() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+
+        enviar("{not json", "GerarOrcamento");
+        enviar(comando(UUID.randomUUID(), saga, os, "GerarOrcamento", "corr-" + saga, itensValidos()),
+                "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                && e.getFormattedMessage().contains("Mensagem invalida"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void itemComQuantidadeZeroGeraOrcamentoFalhouEConfirmaMensagem() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        var payload = itensValidos();
+        ((Map<String, Object>) ((List<?>) payload.get("itens")).get(0)).put("quantidade", 0);
+
+        enviar(comando(messageId, saga, os, "GerarOrcamento", "corr-" + saga, payload), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoFalhou");
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        assertThat(new ArrayList<>(logs.list)).noneMatch(e -> e.getLevel() == Level.ERROR);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void valorUnitarioInvalidoGeraOrcamentoFalhou() throws Exception {
+        var saga = UUID.randomUUID();
+        var payload = itensValidos();
+        ((Map<String, Object>) ((List<?>) payload.get("itens")).get(0)).put("valorUnitario", "abc");
+
+        enviar(comando(UUID.randomUUID(), saga, UUID.randomUUID(), "GerarOrcamento", "corr-" + saga, payload),
+                "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoFalhou");
+    }
+
+    @Test
+    void falhaDepoisDoRegistroDesfazMarcaERedeliveryProcessa() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        // A gravacao da resposta na outbox falha depois do registro. O teste solta a falha apos o primeiro erro.
+        jdbc.execute("create or replace function falhar_outbox() returns trigger as $$ begin "
+                + "raise exception 'falha simulada'; end $$ language plpgsql");
+        jdbc.execute("create trigger t_falhar_outbox before insert on outbox for each row "
+                + "when (NEW.saga_id = '" + saga + "') execute function falhar_outbox()");
+
+        enviar(comando(messageId, saga, os, "GerarOrcamento", "corr-" + saga, itensValidos()), "GerarOrcamento");
+
+        try {
+            await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                    assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR));
+            assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                    Integer.class, messageId)).isZero();
+        } finally {
+            jdbc.execute("drop trigger if exists t_falhar_outbox on outbox");
+        }
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoGerado");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isEqualTo(1);
+        assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                && e.getFormattedMessage().contains("Error processing message"));
+    }
+
+    @Test
+    void envelopeSemPayloadLogaErroENaoRegistra() throws Exception {
+        var messageId = UUID.randomUUID();
+        var envelope = envelope(messageId, UUID.randomUUID(), UUID.randomUUID(), "GerarOrcamento", "corr", null);
+
+        enviar(mapper.writeValueAsString(envelope), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                        && e.getFormattedMessage().contains("Mensagem invalida")));
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isZero();
+    }
+
+    @Test
+    void estornoComSucessoGeraPagamentoEstornado() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-1");
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("PagamentoEstornado");
+        // Com orcamento, a resposta usa o id de correlacao da saga guardado nele, nao o do comando de estorno.
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo(jdbc.queryForObject("select correlation_id from orcamentos where os_id = ?",
+                        String.class, os))
+                .isNotEqualTo("corr-" + saga);
+        assertThat(jdbc.queryForObject("select status from orcamentos where os_id = ?", String.class, os))
+                .isEqualTo("ESTORNADO");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+    }
+
+    @Test
+    void tresFalhasDoProvedorGeramEstornoFalhouUmaVezETentativasPersistem() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-2");
+        doThrow(new IllegalStateException("provedor fora")).when(pagamentoGateway).estornar(anyString(), any());
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(30)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("select status from orcamentos where os_id = ?", String.class, os))
+                .isEqualTo("PAGO");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        verify(pagamentoGateway, times(3)).estornar(anyString(), any());
+        assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                && e.getLoggerName().equals(EstornarPagamentoUseCase.class.getName()));
+    }
+
+    @Test
+    void entregaQueNaoGravaTentativaConsomeRecebimentoEAindaPublicaEstornoFalhou() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-4");
+        doThrow(new IllegalStateException("provedor fora")).when(pagamentoGateway).estornar(anyString(), any());
+        // A primeira gravacao da tentativa falha (erro de banco simulado): essa entrega queima um recebimento do SQS.
+        doThrow(new IllegalStateException("falha simulada no banco")).doCallRealMethod().when(orcamentos)
+                .salvar(any());
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(30)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        // So 2 entregas gravaram a tentativa, mas a 3a (ultima) desistiu mesmo assim.
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+    }
+
+    @Test
+    void falhaDoProvedorSeguidaDeSucessoEstornaNaSegundaEntrega() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-3");
+        doThrow(new IllegalStateException("provedor fora")).doNothing().when(pagamentoGateway)
+                .estornar(anyString(), any());
+
+        enviar(comando(UUID.randomUUID(), saga, os, "EstornarPagamento", "corr-" + saga, motivo()),
+                "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("PagamentoEstornado");
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(1);
+    }
+
+    @Test
+    void estornoDeOsSemOrcamentoGeraEstornoFalhouEConfirmaMensagem() throws Exception {
+        var saga = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+
+        enviar(comando(messageId, saga, UUID.randomUUID(), "EstornarPagamento", "corr-" + saga, motivo()),
+                "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+    }
+
+    private Map<String, Object> motivo() {
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("motivo", "OS cancelada");
+        return payload;
+    }
+
+    private void criarOrcamentoPago(UUID os, String mpPaymentId) {
+        var agora = Instant.now();
+        var item = new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal("350.00"));
+        orcamentos.salvar(Orcamento.gerar(os, UUID.randomUUID(), "corr-" + UUID.randomUUID(), UUID.randomUUID(), List.of(item), agora));
+        var o = orcamentos.buscarPorOsId(os).orElseThrow();
+        o.aprovar(agora, Duration.ofMinutes(30));
+        orcamentos.salvar(o);
+        o = orcamentos.buscarPorOsId(os).orElseThrow();
+        o.confirmarPagamento(mpPaymentId, agora);
+        orcamentos.salvar(o);
+    }
+
+    private Map<String, Object> itensValidos() {
+        var item = new LinkedHashMap<String, Object>();
+        item.put("tipo", "SERVICO");
+        item.put("referenciaId", UUID.randomUUID());
+        item.put("descricao", "Troca de oleo");
+        item.put("quantidade", 1);
+        item.put("valorUnitario", "350.00");
+        var payload = new LinkedHashMap<String, Object>();
+        payload.put("clienteId", UUID.randomUUID());
+        payload.put("itens", List.of(item));
+        return payload;
+    }
+
+    private Map<String, Object> envelope(UUID messageId, UUID saga, UUID os, String tipo, String correlationId,
+            Map<String, Object> payload) {
+        var m = new LinkedHashMap<String, Object>();
+        m.put("messageId", messageId);
+        m.put("sagaId", saga);
+        m.put("osId", os);
+        m.put("type", tipo);
+        m.put("correlationId", correlationId);
+        m.put("occurredAt", Instant.now().toString());
+        m.put("payload", payload);
+        return m;
+    }
+
+    private String comando(UUID messageId, UUID saga, UUID os, String tipo, String correlationId,
+            Map<String, Object> payload) throws Exception {
+        return mapper.writeValueAsString(envelope(messageId, saga, os, tipo, correlationId, payload));
+    }
+
+    private void enviar(String corpo, String tipo) {
+        String url = sqs.getQueueUrl(b -> b.queueName(FILA_COMANDOS)).join().queueUrl();
+        sqs.sendMessage(b -> b.queueUrl(url).messageBody(corpo)
+                .messageAttributes(Map.of("type", MessageAttributeValue.builder()
+                        .dataType("String").stringValue(tipo).build()))).join();
+    }
+
+    private int linhasOutbox(UUID saga) {
+        return jdbc.queryForObject("select count(*) from outbox where saga_id = ?", Integer.class, saga);
+    }
+
+    /** Espera a fila de comandos ficar sem mensagens visiveis nem em voo, para provar que a segunda copia foi lida. */
+    private void aguardarFilaVazia() {
+        String url = sqs.getQueueUrl(b -> b.queueName(FILA_COMANDOS)).join().queueUrl();
+        await().atMost(Duration.ofSeconds(20)).pollInterval(Duration.ofMillis(500)).until(() -> {
+            var a = sqs.getQueueAttributes(b -> b.queueUrl(url).attributeNames(
+                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES,
+                    QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE)).join().attributes();
+            return "0".equals(a.get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES))
+                    && "0".equals(a.get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES_NOT_VISIBLE));
+        });
+    }
+
+    /** Le a fila de respostas ate achar a mensagem do osId. Descarta as de outros testes. */
+    private Message aguardarResposta(UUID os) {
+        String url = sqs.getQueueUrl(b -> b.queueName(FILA_RESPOSTAS)).join().queueUrl();
+        List<Message> achadas = new ArrayList<>();
+        await().atMost(Duration.ofSeconds(15)).pollInterval(Duration.ofMillis(200)).until(() -> {
+            sqs.receiveMessage(b -> b.queueUrl(url).maxNumberOfMessages(10).waitTimeSeconds(1)
+                    .messageAttributeNames("All")).join().messages().forEach(m -> {
+                if (m.body().contains(os.toString())) {
+                    achadas.add(m);
+                }
+                sqs.deleteMessage(b -> b.queueUrl(url).receiptHandle(m.receiptHandle())).join();
+            });
+            return !achadas.isEmpty();
+        });
+        return achadas.get(0);
+    }
+}

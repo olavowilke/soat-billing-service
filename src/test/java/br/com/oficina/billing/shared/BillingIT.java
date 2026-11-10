@@ -1,6 +1,10 @@
 package br.com.oficina.billing.shared;
 
+import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
+import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
+import io.awspring.cloud.sqs.operations.SqsTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -26,6 +30,18 @@ public abstract class BillingIT {
     protected static final String FILA_COMANDOS = "oficina-test-billing-commands";
     protected static final String FILA_RESPOSTAS = "oficina-test-os-saga-replies";
 
+    /** Spy no template SQS: os testes do relay forcam falha de envio. Fica aqui para todos os ITs usarem o mesmo contexto. */
+    @MockitoSpyBean
+    protected SqsTemplate sqsTemplate;
+
+    /** Spy no provedor fake: os testes de estorno forcam falha. Fica aqui pelo mesmo motivo do spy acima. */
+    @MockitoSpyBean
+    protected PagamentoGateway pagamentoGateway;
+
+    /** Spy no gateway de orcamento: os testes de estorno forcam falha de banco na gravacao. */
+    @MockitoSpyBean
+    protected OrcamentoGateway orcamentoGateway;
+
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("billing_test")
             .withUsername("billing")
@@ -50,7 +66,7 @@ public abstract class BillingIT {
         registry.add("spring.cloud.aws.region.static", localstack::getRegion);
         registry.add("spring.cloud.aws.credentials.access-key", localstack::getAccessKey);
         registry.add("spring.cloud.aws.credentials.secret-key", localstack::getSecretKey);
-        registry.add("billing.filas.comandos", () -> FILA_COMANDOS);
+        // billing.filas.comandos vem de application-test.yml (igual a FILA_COMANDOS), para um IT poder trocar a fila.
         registry.add("billing.filas.respostas", () -> FILA_RESPOSTAS);
     }
 

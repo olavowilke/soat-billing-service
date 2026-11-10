@@ -19,4 +19,25 @@ class ContextLoadsIT extends BillingIT {
         assertThat(resposta.getStatusCode().is2xxSuccessful()).isTrue();
         assertThat(resposta.getBody()).contains("\"status\":\"UP\"");
     }
+
+    @Test
+    void sondaDeProntidaoResponde200() {
+        var resposta = restTemplate.getForEntity("/actuator/health/readiness", String.class);
+
+        assertThat(resposta.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void sondaDeVivacidadeResponde200() {
+        var resposta = restTemplate.getForEntity("/actuator/health/liveness", String.class);
+
+        assertThat(resposta.getStatusCode().is2xxSuccessful()).isTrue();
+    }
+
+    @Test
+    void saudeNaoExpoeDetalhes() {
+        var resposta = restTemplate.getForEntity("/actuator/health", String.class);
+
+        assertThat(resposta.getBody()).doesNotContain("components");
+    }
 }

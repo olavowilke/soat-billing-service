@@ -28,6 +28,11 @@ jobs:
       - name: Build and test
         run: mvn verify --batch-mode --no-transfer-progress -s settings.xml
 
+      - name: Render kustomize (homolog)
+        run: |
+          kubectl kustomize k8s/overlays/homolog > /tmp/homolog.yaml
+          grep -q "nodePort[:] 30081" /tmp/homolog.yaml
+
       - name: Sonar analysis
         if: env.SONAR_TOKEN != ''
         run: >
@@ -45,3 +50,24 @@ jobs:
           name: jacoco-report
           path: target/site/jacoco/
           retention-days: 7
+
+  terraform-validate:
+    name: Terraform fmt e validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate

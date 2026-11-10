@@ -1,0 +1,20 @@
+spring:
+  jpa:
+    show-sql: false
+
+billing:
+  filas:
+    # Must equal BillingIT.FILA_COMANDOS. An IT that needs its own queue overrides it with @TestPropertySource.
+    comandos: oficina-test-billing-commands
+  outbox:
+    # Long interval: tests drive the relay explicitly. OutboxRelaySchedulerIT overrides it.
+    intervalo: PT1H
+
+  pagamento:
+    # Long interval: tests drive the expiry job explicitly.
+    verificacao: PT24H
+
+logging:
+  level:
+    # Tests of unique constraints make the driver log the expected 23505 error.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"

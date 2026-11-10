@@ -1,0 +1,159 @@
+name: CD - Build image & Deploy (billing-service)
+
+# main -> ambiente homolog.
+# A variavel de repositorio DEPLOY_HOMOLOG controla o deploy: so roda se for "true".
+# Ordem: terraform (fila, banco, role, ECR, rotas) -> build, push e rollout.
+# workflow_dispatch roda so o homolog: nao existe outro ambiente.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-homolog
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # OIDC para assumir a role na AWS, sem chave estatica
+  contents: read
+
+jobs:
+  terraform:
+    if: vars.DEPLOY_HOMOLOG == 'true'
+    name: terraform apply
+    runs-on: ubuntu-latest
+    environment: homolog
+    env:
+      AMBIENTE: homolog
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: terraform init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=billing-service/${AMBIENTE}/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: terraform apply
+        working-directory: terraform
+        run: terraform apply -input=false -auto-approve -var-file=environments/${AMBIENTE}.tfvars
+
+  build-and-deploy:
+    needs: terraform
+    if: vars.DEPLOY_HOMOLOG == 'true'
+    name: Build & push ECR + kubectl apply
+    runs-on: ubuntu-latest
+    environment: homolog
+    env:
+      AMBIENTE: homolog
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Credenciais AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login no ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ler URL do repositorio ECR (SSM)
+        id: ecr
+        run: |
+          set -euo pipefail
+          REPO_URL="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/registry/billing-service/repository-url" --query 'Parameter.Value' --output text)"
+          echo "repository_url=$REPO_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build e push da imagem
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ecr.outputs.repository_url }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: aws eks update-kubeconfig
+        run: |
+          set -euo pipefail
+          CLUSTER_NAME="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/cluster/name" --query 'Parameter.Value' --output text)"
+          aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Set up kustomize
+        run: |
+          curl -sLo kustomize.tar.gz https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.5.0/kustomize_v5.5.0_linux_amd64.tar.gz
+          tar -xzf kustomize.tar.gz
+          sudo mv kustomize /usr/local/bin/kustomize
+
+      # O Namespace, o ConfigMap billing-service-runtime e o Secret billing-secrets
+      # existem antes do Deployment: as referencias nao sao opcionais e o pod
+      # nao sobe sem elas. Os valores vem do SSM e do Secrets Manager (role de deploy).
+      - name: Criar Namespace, ConfigMap runtime e Secret billing-secrets
+        env:
+          NEW_RELIC_LICENSE_KEY: ${{ secrets.NEW_RELIC_LICENSE_KEY }}
+        run: |
+          set -euo pipefail
+          DB_ENDPOINT="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/billing/db/endpoint" --query 'Parameter.Value' --output text)"
+          DB_SECRET_ARN="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/billing/db/secret-arn" --query 'Parameter.Value' --output text)"
+          API_ENDPOINT="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/gateway/endpoint" --query 'Parameter.Value' --output text)"
+          DB_JSON="$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --query SecretString --output text)"
+          MP_JSON="$(aws secretsmanager get-secret-value --secret-id "oficina/${AMBIENTE}/billing/mercadopago" --query SecretString --output text)"
+          DB_USERNAME="$(jq -er .username <<<"$DB_JSON")"
+          DB_PASSWORD="$(jq -er .password <<<"$DB_JSON")"
+          MP_ACCESS_TOKEN="$(jq -er .access_token <<<"$MP_JSON")"
+          MP_WEBHOOK_SECRET="$(jq -er .webhook_secret <<<"$MP_JSON")"
+          echo "::add-mask::${DB_PASSWORD}"
+          echo "::add-mask::${MP_ACCESS_TOKEN}"
+          echo "::add-mask::${MP_WEBHOOK_SECRET}"
+
+          kubectl apply -f k8s/base/namespace.yaml
+          kubectl create configmap billing-service-runtime \
+            --namespace billing \
+            --from-literal=BILLING_URL_PUBLICA="${API_ENDPOINT%/}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic billing-secrets \
+            --namespace billing \
+            --from-literal=DB_URL="jdbc:postgresql://${DB_ENDPOINT}:5432/billing_db" \
+            --from-literal=DB_USERNAME="${DB_USERNAME}" \
+            --from-literal=DB_PASSWORD="${DB_PASSWORD}" \
+            --from-literal=BILLING_MERCADOPAGO_ACCESS_TOKEN="${MP_ACCESS_TOKEN}" \
+            --from-literal=BILLING_MERCADOPAGO_WEBHOOK_SECRET="${MP_WEBHOOK_SECRET}" \
+            --from-literal=NEW_RELIC_LICENSE_KEY="${NEW_RELIC_LICENSE_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # Fixa a tag imutavel antes do apply: um unico rollout, sem imagem placeholder.
+      - name: kubectl apply (manifestos com a imagem sha-<sha>)
+        working-directory: k8s/overlays/homolog
+        run: |
+          set -euo pipefail
+          kustomize edit set image "billing-service=${{ steps.ecr.outputs.repository_url }}:sha-${{ github.sha }}"
+          kustomize build . | kubectl apply -f -
+
+      - name: kubectl rollout status
+        run: kubectl -n billing rollout status deploy/billing-service --timeout=300s
+
+      - name: Smoke test (health via API Gateway)
+        run: |
+          set -euo pipefail
+          API_ENDPOINT="$(aws ssm get-parameter --name "/oficina/${AMBIENTE}/gateway/endpoint" --query 'Parameter.Value' --output text)"
+          curl -sf "${API_ENDPOINT%/}/api/billing/actuator/health"

@@ -135,6 +135,22 @@ class OutboxRelayIT extends BillingIT {
     }
 
     @Test
+    void relayEnviaTraceGravadoNaLinhaEUsaIdDaLinhaSeCorrelationIdVazio() {
+        var saga = UUID.randomUUID();
+        var id = UUID.randomUUID();
+        jdbc.update("""
+                insert into outbox (id, tipo, saga_id, os_id, correlation_id, payload, criado_em, trace_headers)
+                values (?, 'OrcamentoRecusado', ?, ?, '', '{}'::jsonb, now(), '{"newrelic":"abc123"}')
+                """, id, saga, UUID.randomUUID());
+
+        relay.enviarPendentes();
+
+        var mensagem = receber(Set.of(saga), 1).get(0);
+        assertThat(mensagem.messageAttributes().get("newrelic").stringValue()).isEqualTo("abc123");
+        assertThat(mensagem.messageAttributes().get("correlationId").stringValue()).isEqualTo(id.toString());
+    }
+
+    @Test
     @SuppressWarnings("unchecked")
     void relayMantemLinhaQuandoEnvioFalha(CapturedOutput saida) {
         doThrow(new IllegalStateException("fila fora do ar")).when(sqsTemplate).send(any(Consumer.class));

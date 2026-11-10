@@ -48,7 +48,8 @@ CREATE TABLE outbox (
     criado_em      TIMESTAMPTZ  NOT NULL,
     enviado_em     TIMESTAMPTZ,
     tentativas     INT          NOT NULL DEFAULT 0,
-    proxima_tentativa_em TIMESTAMPTZ
+    proxima_tentativa_em TIMESTAMPTZ,
+    trace_headers  TEXT
 );
 
 CREATE INDEX idx_outbox_pendentes ON outbox (criado_em) WHERE enviado_em IS NULL;

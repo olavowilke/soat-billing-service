@@ -4,6 +4,8 @@ import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
 import br.com.oficina.billing.shared.infrastructure.CorrelationIdFilter;
 import br.com.oficina.billing.shared.infrastructure.mensageria.OutboxData;
 import br.com.oficina.billing.shared.infrastructure.mensageria.OutboxJpaRepository;
+import br.com.oficina.billing.shared.infrastructure.mensageria.TracingMensagens;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.slf4j.MDC;
@@ -95,7 +97,20 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
         var payload = mapper.createObjectNode();
         montar.accept(payload);
         repository.save(new OutboxData(UUID.randomUUID(), tipo, sagaId, osId, correlationId(),
-                payload.toString(), Instant.now()));
+                payload.toString(), Instant.now(), traceHeaders()));
+    }
+
+    /** Captura o trace agora, na thread da transacao. O relay roda em outra thread e envia este valor. */
+    private String traceHeaders() {
+        var cabecalhos = TracingMensagens.cabecalhosSaida();
+        if (cabecalhos.isEmpty()) {
+            return null;
+        }
+        try {
+            return mapper.writeValueAsString(cabecalhos);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Cabecalhos de trace invalidos", e);
+        }
     }
 
     private static String correlationId() {

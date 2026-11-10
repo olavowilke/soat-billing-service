@@ -1,6 +1,7 @@
 package br.com.oficina.billing.shared.infrastructure.mensageria;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.awspring.cloud.sqs.operations.SqsTemplate;
 import org.slf4j.Logger;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.Map;
 
 /**
  * Le a outbox e envia as respostas para a fila do OS Service.
@@ -60,16 +62,36 @@ public class OutboxRelay {
         }
     }
 
+    /** Le o trace gravado com a linha. Sem valor, a mensagem sai sem o atributo newrelic. */
+    private Map<String, String> lerTrace(OutboxData linha) throws JsonProcessingException {
+        var bruto = linha.getTraceHeaders();
+        if (bruto == null || bruto.isBlank()) {
+            return Map.of();
+        }
+        return mapper.readValue(bruto, new TypeReference<Map<String, String>>() {
+        });
+    }
+
+    /** SQS recusa atributo vazio. Uma linha sem correlationId usa o id da propria linha. */
+    private static String correlationId(OutboxData linha) {
+        var valor = linha.getCorrelationId();
+        return valor == null || valor.isBlank() ? linha.getId().toString() : valor;
+    }
+
     private void enviar(OutboxData linha) throws JsonProcessingException {
         var envelope = new MensagemSaga(linha.getId(), linha.getSagaId(), linha.getOsId(), linha.getTipo(),
                 linha.getCorrelationId(), linha.getCriadoEm(), mapper.readTree(linha.getPayload()));
         var corpo = mapper.writeValueAsString(envelope);
-        var trace = TracingMensagens.cabecalhosSaida();
+        var trace = lerTrace(linha);
         sqsTemplate.send(to -> {
             to.queue(filaRespostas).payload(corpo)
                     .header("type", linha.getTipo())
-                    .header("correlationId", linha.getCorrelationId());
-            trace.forEach(to::header);
+                    .header("correlationId", correlationId(linha));
+            trace.forEach((k, v) -> {
+                if (v != null && !v.isBlank()) {
+                    to.header(k, v);
+                }
+            });
         });
     }
 }

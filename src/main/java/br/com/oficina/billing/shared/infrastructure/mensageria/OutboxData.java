@@ -45,6 +45,10 @@ public class OutboxData {
     @Column(name = "proxima_tentativa_em")
     private Instant proximaTentativaEm;
 
+    /** Mapa JSON dos atributos de trace (por exemplo {"newrelic": "..."}) capturado quando a linha foi gravada. */
+    @Column(name = "trace_headers", columnDefinition = "text")
+    private String traceHeaders;
+
     protected OutboxData() {
     }
 
@@ -57,6 +61,16 @@ public class OutboxData {
         this.correlationId = correlationId;
         this.payload = payload;
         this.criadoEm = criadoEm;
+    }
+
+    public OutboxData(UUID id, String tipo, UUID sagaId, UUID osId, String correlationId, String payload,
+            Instant criadoEm, String traceHeaders) {
+        this(id, tipo, sagaId, osId, correlationId, payload, criadoEm);
+        this.traceHeaders = traceHeaders;
+    }
+
+    public String getTraceHeaders() {
+        return traceHeaders;
     }
 
     public UUID getId() {

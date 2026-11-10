@@ -6,6 +6,7 @@ import br.com.oficina.billing.shared.infrastructure.mensageria.OutboxData;
 import br.com.oficina.billing.shared.infrastructure.mensageria.OutboxJpaRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
@@ -42,6 +43,12 @@ class RespostaSagaGatewayOutboxIT extends BillingIT {
 
     @BeforeEach
     void limpar() {
+        jdbc.update("delete from outbox");
+        MDC.clear();
+    }
+
+    @AfterEach
+    void limparDepois() {
         jdbc.update("delete from outbox");
         MDC.clear();
     }

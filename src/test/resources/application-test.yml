@@ -1,0 +1,13 @@
+spring:
+  jpa:
+    show-sql: false
+
+billing:
+  outbox:
+    # Long interval: tests drive the relay explicitly. OutboxRelaySchedulerIT overrides it.
+    intervalo: PT1H
+
+logging:
+  level:
+    # Tests of unique constraints make the driver log the expected 23505 error.
+    org.hibernate.engine.jdbc.spi.SqlExceptionHelper: "OFF"

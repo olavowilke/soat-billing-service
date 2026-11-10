@@ -3,6 +3,7 @@ package br.com.oficina.billing.shared.infrastructure.mensageria;
 import br.com.oficina.billing.shared.BillingIT;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.awspring.cloud.sqs.operations.SqsSendOptions;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,11 +35,20 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
 
+/**
+ * Testes do relay. O intervalo do agendador e de 1 hora no perfil de teste, entao nenhuma rodada roda sozinha:
+ * cada teste chama {@code enviarPendentes()} na mesma thread. Isso evita stub do spy concorrente com o agendador.
+ * O agendador real e testado em {@link OutboxRelaySchedulerIT}.
+ */
 @ExtendWith(OutputCaptureExtension.class)
 class OutboxRelayIT extends BillingIT {
 
     private static final String TIPO_FALHA = "FalhaForcada";
+
+    @Autowired
+    private OutboxRelay relay;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -50,6 +60,7 @@ class OutboxRelayIT extends BillingIT {
     private SqsAsyncClient sqs;
 
     @BeforeEach
+    @AfterEach
     void limpar() {
         jdbc.update("delete from outbox");
     }
@@ -73,34 +84,39 @@ class OutboxRelayIT extends BillingIT {
         return jdbc.queryForObject("select enviado_em is not null from outbox where id = ?", Boolean.class, id);
     }
 
+    private int tentativas(UUID id) {
+        return jdbc.queryForObject("select tentativas from outbox where id = ?", Integer.class, id);
+    }
+
+    private void fimDoBackoff() {
+        jdbc.update("update outbox set proxima_tentativa_em = null");
+    }
+
     private List<Message> receber(Set<UUID> sagas, int esperadas) {
         var encontradas = new ArrayList<Message>();
         var queueUrl = sqs.getQueueUrl(b -> b.queueName(FILA_RESPOSTAS)).join().queueUrl();
         await().atMost(Duration.ofSeconds(20)).until(() -> {
-            coletar(queueUrl, sagas, encontradas);
+            var resposta = sqs.receiveMessage(ReceiveMessageRequest.builder().queueUrl(queueUrl)
+                    .messageAttributeNames("All").waitTimeSeconds(1).maxNumberOfMessages(10).build()).join();
+            resposta.messages().stream()
+                    .filter(m -> sagas.stream().anyMatch(s -> m.body().contains(s.toString())))
+                    .forEach(encontradas::add);
             return encontradas.size() >= esperadas;
         });
         return encontradas;
     }
 
-    private void coletar(String queueUrl, Set<UUID> sagas, List<Message> destino) {
-        var resposta = sqs.receiveMessage(ReceiveMessageRequest.builder().queueUrl(queueUrl)
-                .messageAttributeNames("All").waitTimeSeconds(1).maxNumberOfMessages(10).build()).join();
-        resposta.messages().stream()
-                .filter(m -> sagas.stream().anyMatch(s -> m.body().contains(s.toString())))
-                .forEach(destino::add);
-    }
-
     @Test
-    void relayEnviaLinhasPendentesEMarcaEnviadas() throws Exception {
+    void relayEnviaEnvelopeEAtributosDoContrato() throws Exception {
         var saga1 = UUID.randomUUID();
         var saga2 = UUID.randomUUID();
         var primeira = inserir(saga1, "OrcamentoGerado", "{\"orcamentoId\":\"" + UUID.randomUUID()
                 + "\",\"valorTotal\":\"350.00\"}", 2);
         var segunda = inserirRecusado(saga2, 1);
 
-        var mensagens = receber(Set.of(saga1, saga2), 2);
+        relay.enviarPendentes();
 
+        var mensagens = receber(Set.of(saga1, saga2), 2);
         assertThat(mensagens).extracting(m -> m.messageAttributes().get("type").stringValue())
                 .containsExactlyInAnyOrder("OrcamentoGerado", "OrcamentoRecusado");
         var gerado = mensagens.stream()
@@ -114,15 +130,8 @@ class OutboxRelayIT extends BillingIT {
         assertThat(envelope.get("type").asText()).isEqualTo("OrcamentoGerado");
         assertThat(envelope.get("occurredAt").asText()).endsWith("Z");
         assertThat(envelope.get("payload").get("valorTotal").asText()).isEqualTo("350.00");
-        await().atMost(Duration.ofSeconds(10)).until(() -> enviada(primeira) && enviada(segunda));
-
-        // Passa pelo agendador real: depois de marcadas, as linhas nao podem ser enviadas de novo.
-        var extras = new ArrayList<Message>();
-        var queueUrl = sqs.getQueueUrl(b -> b.queueName(FILA_RESPOSTAS)).join().queueUrl();
-        for (int i = 0; i < 3; i++) {
-            coletar(queueUrl, Set.of(saga1, saga2), extras);
-        }
-        assertThat(extras).isEmpty();
+        assertThat(enviada(primeira)).isTrue();
+        assertThat(enviada(segunda)).isTrue();
     }
 
     @Test
@@ -131,16 +140,29 @@ class OutboxRelayIT extends BillingIT {
         doThrow(new IllegalStateException("fila fora do ar")).when(sqsTemplate).send(any(Consumer.class));
         var id = inserirRecusado(UUID.randomUUID(), 0);
 
-        Mockito.verify(sqsTemplate, Mockito.timeout(15_000).atLeast(2)).send(any(Consumer.class));
+        relay.enviarPendentes();
+
         assertThat(enviada(id)).isFalse();
-        var tentativas = jdbc.queryForObject("select tentativas from outbox where id = ?", Integer.class, id);
-        assertThat(tentativas).isGreaterThanOrEqualTo(2);
-        assertThat(jdbc.queryForObject("select proxima_tentativa_em is not null from outbox where id = ?",
+        assertThat(tentativas(id)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select proxima_tentativa_em > now() from outbox where id = ?",
                 Boolean.class, id)).isTrue();
         assertThat(saida.getOut()).contains("Falha ao enviar outbox id=" + id).contains("fila fora do ar");
 
+        // Em backoff: a rodada seguinte nao tenta de novo.
+        relay.enviarPendentes();
+        Mockito.verify(sqsTemplate, times(1)).send(any(Consumer.class));
+        assertThat(tentativas(id)).isEqualTo(1);
+
+        // Fim do backoff com a fila ainda fora: conta outra falha.
+        fimDoBackoff();
+        relay.enviarPendentes();
+        assertThat(tentativas(id)).isEqualTo(2);
+
+        // Fila volta: a linha segue e e enviada.
         reset(sqsTemplate);
-        await().atMost(Duration.ofSeconds(20)).until(() -> enviada(id));
+        fimDoBackoff();
+        relay.enviarPendentes();
+        assertThat(enviada(id)).isTrue();
     }
 
     @Test
@@ -164,17 +186,28 @@ class OutboxRelayIT extends BillingIT {
         var depoisDaFalha = inserirRecusado(sagaComFalha, 2);
         var outra = inserirRecusado(outraSaga, 1);
 
-        await().atMost(Duration.ofSeconds(15)).until(() -> enviada(outra));
-        await().atMost(Duration.ofSeconds(15)).until(() ->
-                jdbc.queryForObject("select tentativas from outbox where id = ?", Integer.class, falha) >= 1);
+        relay.enviarPendentes();
+
+        assertThat(enviada(outra)).isTrue();
         assertThat(enviada(falha)).isFalse();
+        assertThat(tentativas(falha)).isEqualTo(1);
         assertThat(enviada(depoisDaFalha)).as("linha mais nova da mesma saga espera a anterior").isFalse();
         assertThat(saida.getOut()).contains("Falha ao enviar outbox id=" + falha).contains("falha forcada");
 
+        fimDoBackoff();
+        relay.enviarPendentes();
+        assertThat(tentativas(falha)).isEqualTo(2);
+        assertThat(enviada(depoisDaFalha)).isFalse();
+
         reset(sqsTemplate);
-        await().atMost(Duration.ofSeconds(30)).until(() -> enviada(falha) && enviada(depoisDaFalha));
-        var ordem = jdbc.queryForList("select id from outbox where saga_id = ? order by enviado_em, criado_em",
-                UUID.class, sagaComFalha);
+        fimDoBackoff();
+        relay.enviarPendentes();
+        assertThat(enviada(falha)).isTrue();
+        assertThat(enviada(depoisDaFalha)).isFalse();
+        relay.enviarPendentes();
+        assertThat(enviada(depoisDaFalha)).isTrue();
+        var ordem = jdbc.queryForList("select id from outbox where saga_id = ? order by enviado_em", UUID.class,
+                sagaComFalha);
         assertThat(ordem).containsExactly(falha, depoisDaFalha);
     }
 }

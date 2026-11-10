@@ -45,7 +45,7 @@ public class OutboxRelay {
         this.filaRespostas = filaRespostas;
     }
 
-    @Scheduled(fixedDelayString = "${billing.outbox.intervalo:PT1S}")
+    @Scheduled(fixedDelayString = "${billing.outbox.intervalo:PT1S}", initialDelayString = "${billing.outbox.intervalo:PT1S}")
     @Transactional
     public void enviarPendentes() {
         for (var linha : repository.travarPendentes(LOTE)) {

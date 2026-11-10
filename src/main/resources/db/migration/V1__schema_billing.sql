@@ -52,6 +52,7 @@ CREATE TABLE outbox (
 );
 
 CREATE INDEX idx_outbox_pendentes ON outbox (criado_em) WHERE enviado_em IS NULL;
+CREATE INDEX idx_outbox_pendentes_saga ON outbox (saga_id, criado_em) WHERE enviado_em IS NULL;
 
 CREATE TABLE mensagens_processadas (
     message_id    UUID        PRIMARY KEY,

@@ -1,9 +1,13 @@
 package br.com.oficina.billing.shared.infrastructure;
 
+import br.com.oficina.billing.orcamento.entities.TransicaoInvalidaException;
+import br.com.oficina.billing.orcamento.gateways.ProvedorPagamentoIndisponivelException;
+import br.com.oficina.billing.orcamento.usecases.ClienteNaoAutorizadoException;
 import br.com.oficina.billing.shared.entities.RecursoNaoEncontradoException;
 import br.com.oficina.billing.shared.presenters.ApiError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -28,6 +32,33 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     public ResponseEntity<ApiError> handleRecursoNaoEncontrado(RecursoNaoEncontradoException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of(404, "Not Found", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ClienteNaoAutorizadoException.class)
+    public ResponseEntity<ApiError> handleClienteNaoAutorizado(ClienteNaoAutorizadoException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of(403, "Forbidden", ex.getMessage()));
+    }
+
+    @ExceptionHandler(TransicaoInvalidaException.class)
+    public ResponseEntity<ApiError> handleTransicaoInvalida(TransicaoInvalidaException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(409, "Conflict", ex.getMessage()));
+    }
+
+    /** Outra requisicao gravou o mesmo orcamento antes. O cliente pode consultar e tentar de novo. */
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<ApiError> handleConflitoOtimista(OptimisticLockingFailureException ex) {
+        log.warn("Conflito de gravacao concorrente: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of(409, "Conflict", "O orcamento foi alterado por outra requisicao. Tente de novo."));
+    }
+
+    @ExceptionHandler(ProvedorPagamentoIndisponivelException.class)
+    public ResponseEntity<ApiError> handleProvedorIndisponivel(ProvedorPagamentoIndisponivelException ex) {
+        log.warn("Provedor de pagamento indisponivel: {}", ex.getMessage());
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                .body(ApiError.of(502, "Bad Gateway", "Provedor de pagamento indisponivel. Tente de novo."));
     }
 
     @Override

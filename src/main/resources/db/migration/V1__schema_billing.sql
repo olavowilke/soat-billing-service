@@ -2,6 +2,7 @@ CREATE TABLE orcamentos (
     id            UUID           PRIMARY KEY,
     os_id         UUID           NOT NULL UNIQUE,
     saga_id       UUID           NOT NULL,
+    correlation_id VARCHAR(100)  NOT NULL,
     cliente_id    UUID           NOT NULL,
     status        VARCHAR(20)    NOT NULL,
     valor_total   NUMERIC(12, 2) NOT NULL,

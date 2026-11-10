@@ -21,7 +21,7 @@ class OrcamentoTest {
 
     @BeforeEach
     void setUp() {
-        orc = Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), clienteId, itens(), T0);
+        orc = Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), "corr-" + UUID.randomUUID(), clienteId, itens(), T0);
     }
 
     private static List<ItemOrcamento> itens() {
@@ -54,9 +54,9 @@ class OrcamentoTest {
         var osId = UUID.randomUUID();
         var sagaId = UUID.randomUUID();
         List<ItemOrcamento> vazia = List.of();
-        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, clienteId, vazia, T0))
+        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, "corr-" + sagaId, clienteId, vazia, T0))
                 .isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, clienteId, null, T0))
+        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, "corr-" + sagaId, clienteId, null, T0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -65,7 +65,7 @@ class OrcamentoTest {
         var osId = UUID.randomUUID();
         var sagaId = UUID.randomUUID();
         var zero = List.of(new ItemOrcamento(TipoItem.PECA, UUID.randomUUID(), "Brinde", 1, BigDecimal.ZERO));
-        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, clienteId, zero, T0))
+        assertThatThrownBy(() -> Orcamento.gerar(osId, sagaId, "corr-" + sagaId, clienteId, zero, T0))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -156,11 +156,12 @@ class OrcamentoTest {
         orc.aprovar(T0, PRAZO);
         var p = orc.getPagamento().orElseThrow();
         p.definirCobranca("PREF-1", "https://pay/1");
-        var copia = Orcamento.reconstituir(orc.getId(), orc.getOsId(), orc.getSagaId(), orc.getClienteId(),
-                orc.getStatus(), orc.getItens(), orc.getValorTotal(), p, 7L, orc.getCriadoEm(), orc.getAtualizadoEm());
+        var copia = Orcamento.reconstituir(orc.getId(), orc.getOsId(), orc.getSagaId(), orc.getCorrelationId(),
+                orc.getClienteId(), orc.getStatus(), orc.getItens(), orc.getValorTotal(), p, 7L, orc.getCriadoEm(), orc.getAtualizadoEm());
         assertThat(copia.getId()).isEqualTo(orc.getId());
         assertThat(copia.getOsId()).isEqualTo(orc.getOsId());
         assertThat(copia.getSagaId()).isEqualTo(orc.getSagaId());
+        assertThat(copia.getCorrelationId()).isEqualTo(orc.getCorrelationId()).startsWith("corr-");
         assertThat(copia.getClienteId()).isEqualTo(clienteId);
         assertThat(copia.getStatus()).isEqualTo(StatusOrcamento.APROVADO);
         assertThat(copia.getItens()).hasSize(2);

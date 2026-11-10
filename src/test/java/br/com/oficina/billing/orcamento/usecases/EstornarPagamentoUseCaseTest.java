@@ -39,6 +39,8 @@ import static org.mockito.Mockito.when;
 class EstornarPagamentoUseCaseTest {
 
     private static final UUID SAGA = UUID.randomUUID();
+    private static final String CORR_COMANDO = "corr-do-comando";
+    private static final String CORR_SAGA = "corr-" + SAGA;
     private static final UUID OS = UUID.randomUUID();
     private static final Instant AGORA = Instant.parse("2026-11-09T12:00:00Z");
 
@@ -65,7 +67,7 @@ class EstornarPagamentoUseCaseTest {
     }
 
     private static Orcamento pago(String mpPaymentId) {
-        var o = Orcamento.gerar(OS, SAGA, UUID.randomUUID(), List.of(
+        var o = Orcamento.gerar(OS, SAGA, CORR_SAGA, UUID.randomUUID(), List.of(
                 new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal("350.00"))),
                 AGORA.minusSeconds(60));
         o.aprovar(AGORA.minusSeconds(50), Duration.ofMinutes(30));
@@ -83,7 +85,7 @@ class EstornarPagamentoUseCaseTest {
         var o = pago("mp-1");
         dado(o);
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.ESTORNADO);
         var pagamentoId = o.getPagamento().orElseThrow().getId();
@@ -92,7 +94,7 @@ class EstornarPagamentoUseCaseTest {
         assertThat(o.getStatus()).isEqualTo(StatusOrcamento.ESTORNADO);
         assertThat(o.getPagamento().orElseThrow().getStatus()).isEqualTo(StatusPagamento.ESTORNADO);
         assertThat(o.getAtualizadoEm()).isEqualTo(AGORA);
-        verify(respostas).pagamentoEstornado(SAGA, OS, pagamentoId);
+        verify(respostas).pagamentoEstornado(SAGA, CORR_SAGA, OS, pagamentoId);
     }
 
     @Test
@@ -101,12 +103,12 @@ class EstornarPagamentoUseCaseTest {
         o.estornar(AGORA.minusSeconds(10));
         dado(o);
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.ESTORNADO);
         verify(pagamentos, never()).estornar(anyString(), any());
         verify(orcamentos, never()).salvar(any());
-        verify(respostas).pagamentoEstornado(SAGA, OS, o.getPagamento().orElseThrow().getId());
+        verify(respostas).pagamentoEstornado(SAGA, CORR_SAGA, OS, o.getPagamento().orElseThrow().getId());
     }
 
     @Test
@@ -115,14 +117,14 @@ class EstornarPagamentoUseCaseTest {
         dado(o);
         doThrow(new IllegalStateException("provedor fora")).when(pagamentos).estornar(anyString(), any());
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
         assertThat(o.getPagamento().orElseThrow().getTentativasEstorno()).isEqualTo(1);
         assertThat(o.getStatus()).isEqualTo(StatusOrcamento.PAGO);
         verify(orcamentos).salvar(o);
-        verify(respostas, never()).estornoFalhou(any(), any(), any(), anyString());
-        verify(respostas, never()).pagamentoEstornado(any(), any(), any());
+        verify(respostas, never()).estornoFalhou(any(), any(), any(), any(), anyString());
+        verify(respostas, never()).pagamentoEstornado(any(), any(), any(), any());
     }
 
     @Test
@@ -131,14 +133,14 @@ class EstornarPagamentoUseCaseTest {
         dado(o);
         doThrow(new IllegalStateException("provedor fora")).when(pagamentos).estornar(anyString(), any());
 
-        assertThat(useCase.execute(SAGA, OS, 1)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
-        assertThat(useCase.execute(SAGA, OS, 2)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
-        var r = useCase.execute(SAGA, OS, 3);
+        assertThat(useCase.execute(SAGA, CORR_COMANDO, OS, 1)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
+        assertThat(useCase.execute(SAGA, CORR_COMANDO, OS, 2)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 3);
 
         assertThat(r).isEqualTo(ResultadoEstorno.DESISTIU);
         assertThat(o.getPagamento().orElseThrow().getTentativasEstorno()).isEqualTo(3);
         assertThat(logs.list).anyMatch(e -> e.getLevel() == Level.ERROR);
-        verify(respostas).estornoFalhou(eq(SAGA), eq(OS), eq(o.getPagamento().orElseThrow().getId()),
+        verify(respostas).estornoFalhou(eq(SAGA), eq(CORR_SAGA), eq(OS), eq(o.getPagamento().orElseThrow().getId()),
                 anyString());
     }
 
@@ -147,37 +149,37 @@ class EstornarPagamentoUseCaseTest {
         var o = pago(" ");
         dado(o);
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.DESISTIU);
         verify(pagamentos, never()).estornar(anyString(), any());
-        verify(respostas).estornoFalhou(SAGA, OS, o.getPagamento().orElseThrow().getId(),
+        verify(respostas).estornoFalhou(SAGA, CORR_SAGA, OS, o.getPagamento().orElseThrow().getId(),
                 "pagamento sem identificador no provedor");
     }
 
     @Test
     void orcamentoAindaAprovadoDesisteComMotivo() {
-        var o = Orcamento.gerar(OS, SAGA, UUID.randomUUID(), List.of(
+        var o = Orcamento.gerar(OS, SAGA, CORR_SAGA, UUID.randomUUID(), List.of(
                 new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal("10.00"))),
                 AGORA);
         var pagamento = o.aprovar(AGORA, Duration.ofMinutes(30));
         dado(o);
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.DESISTIU);
         verify(pagamentos, never()).estornar(anyString(), any());
-        verify(respostas).estornoFalhou(eq(SAGA), eq(OS), eq(pagamento.getId()), anyString());
+        verify(respostas).estornoFalhou(eq(SAGA), eq(CORR_SAGA), eq(OS), eq(pagamento.getId()), anyString());
     }
 
     @Test
     void osSemOrcamentoDesisteComMotivo() {
         when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.empty());
 
-        var r = useCase.execute(SAGA, OS, 1);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 1);
 
         assertThat(r).isEqualTo(ResultadoEstorno.DESISTIU);
-        verify(respostas).estornoFalhou(eq(SAGA), eq(OS), eq(null), anyString());
+        verify(respostas).estornoFalhou(eq(SAGA), eq(CORR_COMANDO), eq(OS), eq(null), anyString());
         verify(orcamentos, never()).salvar(any());
     }
 
@@ -187,12 +189,12 @@ class EstornarPagamentoUseCaseTest {
         dado(o);
         doThrow(new IllegalStateException("provedor fora")).when(pagamentos).estornar(anyString(), any());
 
-        var r = useCase.execute(SAGA, OS, 3);
+        var r = useCase.execute(SAGA, CORR_COMANDO, OS, 3);
 
         assertThat(r).isEqualTo(ResultadoEstorno.DESISTIU);
         assertThat(o.getPagamento().orElseThrow().getTentativasEstorno()).isEqualTo(1);
         verify(orcamentos).salvar(o);
-        verify(respostas).estornoFalhou(eq(SAGA), eq(OS), eq(o.getPagamento().orElseThrow().getId()),
+        verify(respostas).estornoFalhou(eq(SAGA), eq(CORR_SAGA), eq(OS), eq(o.getPagamento().orElseThrow().getId()),
                 anyString());
     }
 
@@ -202,15 +204,15 @@ class EstornarPagamentoUseCaseTest {
         dado(o);
         doThrow(new IllegalStateException("provedor fora")).when(pagamentos).estornar(anyString(), any());
 
-        assertThat(useCase.execute(SAGA, OS, 2)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
+        assertThat(useCase.execute(SAGA, CORR_COMANDO, OS, 2)).isEqualTo(ResultadoEstorno.TENTAR_DE_NOVO);
 
-        verify(respostas, never()).estornoFalhou(any(), any(), any(), anyString());
+        verify(respostas, never()).estornoFalhou(any(), any(), any(), any(), anyString());
     }
 
     @Test
     void ultimaEntregaComProvedorOkEstorna() {
         dado(pago("mp-1"));
 
-        assertThat(useCase.execute(SAGA, OS, 3)).isEqualTo(ResultadoEstorno.ESTORNADO);
+        assertThat(useCase.execute(SAGA, CORR_COMANDO, OS, 3)).isEqualTo(ResultadoEstorno.ESTORNADO);
     }
 }

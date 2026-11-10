@@ -29,7 +29,7 @@ public class RecusarOrcamentoUseCase {
 
         orcamento.recusar(clock.instant());
         Orcamento salvo = orcamentos.salvar(orcamento);
-        respostas.orcamentoRecusado(salvo.getSagaId(), salvo.getOsId(), salvo.getId());
+        respostas.orcamentoRecusado(salvo.getSagaId(), salvo.getCorrelationId(), salvo.getOsId(), salvo.getId());
         return salvo;
     }
 }

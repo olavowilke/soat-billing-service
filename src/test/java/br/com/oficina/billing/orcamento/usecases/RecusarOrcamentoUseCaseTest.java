@@ -46,7 +46,7 @@ class RecusarOrcamentoUseCaseTest {
 
         assertThat(resultado.getStatus()).isEqualTo(StatusOrcamento.RECUSADO);
         verify(orcamentos).salvar(o);
-        verify(respostas).orcamentoRecusado(o.getSagaId(), o.getOsId(), o.getId());
+        verify(respostas).orcamentoRecusado(o.getSagaId(), o.getCorrelationId(), o.getOsId(), o.getId());
     }
 
     @Test

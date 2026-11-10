@@ -63,7 +63,7 @@ class AprovarOrcamentoUseCaseTest {
         assertThat(pagamento.getExpiraEm()).isEqualTo(AGORA.plus(Duration.ofMinutes(30)));
         verify(provedor).criarCobranca(eq(pagamento.getId()), anyString(), eq(new BigDecimal("100.00")));
         verify(orcamentos).salvar(o);
-        verify(respostas).orcamentoAprovado(o.getSagaId(), o.getOsId(), o.getId(), pagamento.getId(),
+        verify(respostas).orcamentoAprovado(o.getSagaId(), o.getCorrelationId(), o.getOsId(), o.getId(), pagamento.getId(),
                 "https://pagar/1");
     }
 

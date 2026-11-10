@@ -118,7 +118,8 @@ public class ComandosListener {
             log.info("Mensagem ja processada, ignorada: messageId={}", mensagem.messageId());
             return Optional.empty();
         }
-        ResultadoEstorno resultado = estornarPagamento.execute(mensagem.sagaId(), mensagem.osId(), receiveCount);
+        ResultadoEstorno resultado = estornarPagamento.execute(mensagem.sagaId(), correlacaoDe(mensagem), mensagem.osId(),
+                receiveCount);
         if (resultado != ResultadoEstorno.TENTAR_DE_NOVO
                 && processadas.registrar(mensagem.messageId(), Instant.now()) == 0) {
             // Outra entrega da mesma mensagem registrou antes. Desfaz a resposta duplicada.
@@ -158,6 +159,12 @@ public class ComandosListener {
         }
     }
 
+    /** O id de correlacao do envelope. Sem ele (mensagem fora do contrato), gera um para a saga. */
+    private static String correlacaoDe(MensagemSaga mensagem) {
+        String id = mensagem.correlationId();
+        return id == null || id.isBlank() ? UUID.randomUUID().toString() : id;
+    }
+
     private GerarOrcamentoCommand paraGerarOrcamento(MensagemSaga mensagem) {
         JsonNode payload = mensagem.payload();
         List<GerarOrcamentoCommand.ItemComando> itens = new ArrayList<>();
@@ -166,7 +173,7 @@ public class ComandosListener {
                     i.path("referenciaId").asText(null), i.path("descricao").asText(null),
                     i.path("quantidade").asInt(), i.path("valorUnitario").asText(null)));
         }
-        return new GerarOrcamentoCommand(mensagem.sagaId(), mensagem.osId(),
+        return new GerarOrcamentoCommand(mensagem.sagaId(), correlacaoDe(mensagem), mensagem.osId(),
                 UUID.fromString(payload.path("clienteId").asText()), itens);
     }
 }

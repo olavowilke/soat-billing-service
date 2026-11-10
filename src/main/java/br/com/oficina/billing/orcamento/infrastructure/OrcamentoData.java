@@ -32,6 +32,9 @@ class OrcamentoData {
     @Column(name = "saga_id", nullable = false)
     private UUID sagaId;
 
+    @Column(name = "correlation_id", nullable = false, length = 100)
+    private String correlationId;
+
     @Column(name = "cliente_id", nullable = false)
     private UUID clienteId;
 
@@ -63,11 +66,12 @@ class OrcamentoData {
     protected OrcamentoData() {
     }
 
-    OrcamentoData(UUID id, UUID osId, UUID sagaId, UUID clienteId, StatusOrcamento status, BigDecimal valorTotal,
+    OrcamentoData(UUID id, UUID osId, UUID sagaId, String correlationId, UUID clienteId, StatusOrcamento status, BigDecimal valorTotal,
             Long versao, Instant criadoEm, Instant atualizadoEm) {
         this.id = id;
         this.osId = osId;
         this.sagaId = sagaId;
+        this.correlationId = correlationId;
         this.clienteId = clienteId;
         this.status = status;
         this.valorTotal = valorTotal;
@@ -86,6 +90,10 @@ class OrcamentoData {
 
     UUID getSagaId() {
         return sagaId;
+    }
+
+    String getCorrelationId() {
+        return correlationId;
     }
 
     UUID getClienteId() {

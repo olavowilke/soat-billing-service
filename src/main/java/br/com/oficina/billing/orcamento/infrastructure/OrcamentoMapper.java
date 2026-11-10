@@ -17,7 +17,7 @@ class OrcamentoMapper {
      * @param novo true se o orcamento ainda nao existe no banco. A versao fica nula para o JPA inserir.
      */
     OrcamentoData paraData(Orcamento o, boolean novo) {
-        var data = new OrcamentoData(o.getId(), o.getOsId(), o.getSagaId(), o.getClienteId(), o.getStatus(),
+        var data = new OrcamentoData(o.getId(), o.getOsId(), o.getSagaId(), o.getCorrelationId(), o.getClienteId(), o.getStatus(),
                 o.getValorTotal(), novo ? null : o.getVersao(), o.getCriadoEm(), o.getAtualizadoEm());
         List<ItemOrcamento> itens = o.getItens();
         for (int i = 0; i < itens.size(); i++) {
@@ -35,7 +35,7 @@ class OrcamentoMapper {
                         i.getValorUnitario()))
                 .toList();
         var pagamento = data.getPagamento() == null ? null : paraDominio(data.getPagamento());
-        return Orcamento.reconstituir(data.getId(), data.getOsId(), data.getSagaId(), data.getClienteId(),
+        return Orcamento.reconstituir(data.getId(), data.getOsId(), data.getSagaId(), data.getCorrelationId(), data.getClienteId(),
                 data.getStatus(), itens, data.getValorTotal(), pagamento, data.getVersao(), data.getCriadoEm(),
                 data.getAtualizadoEm());
     }

@@ -48,7 +48,7 @@ class OrcamentoGatewayImplIT extends BillingIT {
     }
 
     private static Orcamento novo(UUID osId) {
-        return Orcamento.gerar(osId, UUID.randomUUID(), UUID.randomUUID(), itens(), AGORA);
+        return Orcamento.gerar(osId, UUID.randomUUID(), "corr-" + UUID.randomUUID(), UUID.randomUUID(), itens(), AGORA);
     }
 
     @Test

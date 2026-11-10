@@ -285,6 +285,11 @@ class ComandosListenerIT extends BillingIT {
         aguardarFilaVazia();
         assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
                 .isEqualTo("PagamentoEstornado");
+        // Com orcamento, a resposta usa o id de correlacao da saga guardado nele, nao o do comando de estorno.
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo(jdbc.queryForObject("select correlation_id from orcamentos where os_id = ?",
+                        String.class, os))
+                .isNotEqualTo("corr-" + saga);
         assertThat(jdbc.queryForObject("select status from orcamentos where os_id = ?", String.class, os))
                 .isEqualTo("ESTORNADO");
         assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
@@ -384,7 +389,7 @@ class ComandosListenerIT extends BillingIT {
     private void criarOrcamentoPago(UUID os, String mpPaymentId) {
         var agora = Instant.now();
         var item = new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal("350.00"));
-        orcamentos.salvar(Orcamento.gerar(os, UUID.randomUUID(), UUID.randomUUID(), List.of(item), agora));
+        orcamentos.salvar(Orcamento.gerar(os, UUID.randomUUID(), "corr-" + UUID.randomUUID(), UUID.randomUUID(), List.of(item), agora));
         var o = orcamentos.buscarPorOsId(os).orElseThrow();
         o.aprovar(agora, Duration.ofMinutes(30));
         orcamentos.salvar(o);

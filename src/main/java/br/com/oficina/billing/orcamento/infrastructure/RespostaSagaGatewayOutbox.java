@@ -36,22 +36,22 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
     }
 
     @Override
-    public void orcamentoGerado(UUID sagaId, UUID osId, UUID orcamentoId, BigDecimal valorTotal) {
-        gravar("OrcamentoGerado", sagaId, osId, p -> {
+    public void orcamentoGerado(UUID sagaId, String correlationId, UUID osId, UUID orcamentoId, BigDecimal valorTotal) {
+        gravar("OrcamentoGerado", sagaId, correlationId, osId, p -> {
             p.put("orcamentoId", orcamentoId.toString());
             p.put("valorTotal", valorTotal.setScale(2, RoundingMode.HALF_UP).toPlainString());
         });
     }
 
     @Override
-    public void orcamentoFalhou(UUID sagaId, UUID osId, String motivo) {
-        gravar("OrcamentoFalhou", sagaId, osId, p -> p.put("motivo", motivo));
+    public void orcamentoFalhou(UUID sagaId, String correlationId, UUID osId, String motivo) {
+        gravar("OrcamentoFalhou", sagaId, correlationId, osId, p -> p.put("motivo", motivo));
     }
 
     @Override
-    public void orcamentoAprovado(UUID sagaId, UUID osId, UUID orcamentoId, UUID pagamentoId,
-            String linkPagamento) {
-        gravar("OrcamentoAprovado", sagaId, osId, p -> {
+    public void orcamentoAprovado(UUID sagaId, String correlationId, UUID osId, UUID orcamentoId,
+            UUID pagamentoId, String linkPagamento) {
+        gravar("OrcamentoAprovado", sagaId, correlationId, osId, p -> {
             p.put("orcamentoId", orcamentoId.toString());
             p.put("pagamentoId", pagamentoId.toString());
             p.put("linkPagamento", linkPagamento);
@@ -59,21 +59,21 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
     }
 
     @Override
-    public void orcamentoRecusado(UUID sagaId, UUID osId, UUID orcamentoId) {
-        gravar("OrcamentoRecusado", sagaId, osId, p -> p.put("orcamentoId", orcamentoId.toString()));
+    public void orcamentoRecusado(UUID sagaId, String correlationId, UUID osId, UUID orcamentoId) {
+        gravar("OrcamentoRecusado", sagaId, correlationId, osId, p -> p.put("orcamentoId", orcamentoId.toString()));
     }
 
     @Override
-    public void pagamentoConfirmado(UUID sagaId, UUID osId, UUID orcamentoId, UUID pagamentoId) {
-        gravar("PagamentoConfirmado", sagaId, osId, p -> {
+    public void pagamentoConfirmado(UUID sagaId, String correlationId, UUID osId, UUID orcamentoId, UUID pagamentoId) {
+        gravar("PagamentoConfirmado", sagaId, correlationId, osId, p -> {
             p.put("orcamentoId", orcamentoId.toString());
             p.put("pagamentoId", pagamentoId.toString());
         });
     }
 
     @Override
-    public void pagamentoFalhou(UUID sagaId, UUID osId, UUID orcamentoId, UUID pagamentoId, String motivo) {
-        gravar("PagamentoFalhou", sagaId, osId, p -> {
+    public void pagamentoFalhou(UUID sagaId, String correlationId, UUID osId, UUID orcamentoId, UUID pagamentoId, String motivo) {
+        gravar("PagamentoFalhou", sagaId, correlationId, osId, p -> {
             p.put("orcamentoId", orcamentoId.toString());
             p.put("pagamentoId", pagamentoId.toString());
             p.put("motivo", motivo);
@@ -81,23 +81,23 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
     }
 
     @Override
-    public void pagamentoEstornado(UUID sagaId, UUID osId, UUID pagamentoId) {
-        gravar("PagamentoEstornado", sagaId, osId, p -> p.put("pagamentoId", pagamentoId.toString()));
+    public void pagamentoEstornado(UUID sagaId, String correlationId, UUID osId, UUID pagamentoId) {
+        gravar("PagamentoEstornado", sagaId, correlationId, osId, p -> p.put("pagamentoId", pagamentoId.toString()));
     }
 
     @Override
-    public void estornoFalhou(UUID sagaId, UUID osId, UUID pagamentoId, String motivo) {
-        gravar("EstornoFalhou", sagaId, osId, p -> {
+    public void estornoFalhou(UUID sagaId, String correlationId, UUID osId, UUID pagamentoId, String motivo) {
+        gravar("EstornoFalhou", sagaId, correlationId, osId, p -> {
             // Nulo quando a OS nao tem orcamento nem pagamento.
             p.put("pagamentoId", pagamentoId == null ? null : pagamentoId.toString());
             p.put("motivo", motivo);
         });
     }
 
-    private void gravar(String tipo, UUID sagaId, UUID osId, Consumer<ObjectNode> montar) {
+    private void gravar(String tipo, UUID sagaId, String correlationId, UUID osId, Consumer<ObjectNode> montar) {
         var payload = mapper.createObjectNode();
         montar.accept(payload);
-        repository.save(new OutboxData(UUID.randomUUID(), tipo, sagaId, osId, correlationId(),
+        repository.save(new OutboxData(UUID.randomUUID(), tipo, sagaId, osId, idDeCorrelacao(correlationId),
                 payload.toString(), Instant.now(), traceHeaders()));
     }
 
@@ -114,7 +114,11 @@ class RespostaSagaGatewayOutbox implements RespostaSagaGateway {
         }
     }
 
-    private static String correlationId() {
+    /** Sem id da saga (dado antigo), cai no id da requisicao e por fim num id novo. */
+    private static String idDeCorrelacao(String daSaga) {
+        if (daSaga != null && !daSaga.isBlank()) {
+            return daSaga;
+        }
         var doMdc = MDC.get(CorrelationIdFilter.MDC_CORRELATION_ID);
         return doMdc == null || doMdc.isBlank() ? UUID.randomUUID().toString() : doMdc;
     }

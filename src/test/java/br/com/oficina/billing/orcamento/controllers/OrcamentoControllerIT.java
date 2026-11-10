@@ -60,7 +60,7 @@ class OrcamentoControllerIT extends BillingIT {
     }
 
     private Orcamento gerado() {
-        return orcamentoGateway.salvar(Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), CLIENTE, List.of(
+        return orcamentoGateway.salvar(Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), "corr-" + UUID.randomUUID(), CLIENTE, List.of(
                 new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1,
                         new BigDecimal("350.00"))), Instant.now()));
     }
@@ -117,6 +117,46 @@ class OrcamentoControllerIT extends BillingIT {
         assertThat(linhas.get(0).get("linkPagamento").asText()).isEqualTo(corpo.linkPagamento());
         assertThat(orcamentoGateway.buscarPorId(o.getId()).orElseThrow().getStatus())
                 .isEqualTo(StatusOrcamento.APROVADO);
+    }
+
+    @Test
+    void aprovarComOutroCorrelationIdHttpAindaRespondeComOIdDaSaga() {
+        Orcamento o = gerado();
+        HttpHeaders h = new HttpHeaders();
+        h.add("x-correlation-id", "id-da-requisicao-http");
+
+        var resposta = http.exchange("/orcamentos/" + o.getId() + "/aprovar", HttpMethod.POST, new HttpEntity<>(h),
+                OrcamentoResponse.class);
+
+        assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class,
+                o.getSagaId())).isEqualTo(o.getCorrelationId()).isNotEqualTo("id-da-requisicao-http");
+    }
+
+    @Test
+    void recusarComOutroCorrelationIdHttpAindaRespondeComOIdDaSaga() {
+        Orcamento o = gerado();
+        HttpHeaders h = new HttpHeaders();
+        h.add("x-correlation-id", "id-da-requisicao-http");
+
+        http.exchange("/orcamentos/" + o.getId() + "/recusar", HttpMethod.POST, new HttpEntity<>(h),
+                OrcamentoResponse.class);
+
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class,
+                o.getSagaId())).isEqualTo(o.getCorrelationId());
+    }
+
+    @Test
+    void fakeAprovarRespondeComOIdDaSagaEmVezDoDaRequisicao() {
+        Orcamento o = aprovado();
+        HttpHeaders h = new HttpHeaders();
+        h.add("x-correlation-id", "id-da-requisicao-http");
+
+        http.exchange("/public/fake-pagamentos/" + o.getPagamento().orElseThrow().getId() + "/aprovar",
+                HttpMethod.POST, new HttpEntity<>(h), Void.class);
+
+        assertThat(jdbc.queryForObject("select correlation_id from outbox where saga_id = ?", String.class,
+                o.getSagaId())).isEqualTo(o.getCorrelationId());
     }
 
     @Test

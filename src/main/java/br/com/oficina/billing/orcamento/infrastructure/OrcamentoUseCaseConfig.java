@@ -1,11 +1,13 @@
 package br.com.oficina.billing.orcamento.infrastructure;
 
+import br.com.oficina.billing.orcamento.gateways.ExecutorTransacional;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
 import br.com.oficina.billing.orcamento.usecases.AprovarOrcamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.BuscarOrcamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.EstornarPagamentoUseCase;
+import br.com.oficina.billing.orcamento.usecases.ExpirarPagamentosUseCase;
 import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.ProcessarResultadoPagamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.RecusarOrcamentoUseCase;
@@ -54,6 +56,12 @@ class OrcamentoUseCaseConfig {
     ProcessarResultadoPagamentoUseCase processarResultadoPagamentoUseCase(OrcamentoGateway orcamentos,
             PagamentoGateway pagamentos, RespostaSagaGateway respostas, Clock clock) {
         return new ProcessarResultadoPagamentoUseCase(orcamentos, pagamentos, respostas, clock);
+    }
+
+    @Bean
+    ExpirarPagamentosUseCase expirarPagamentosUseCase(OrcamentoGateway orcamentos, RespostaSagaGateway respostas,
+            ExecutorTransacional transacao) {
+        return new ExpirarPagamentosUseCase(orcamentos, respostas, transacao);
     }
 
     @Bean

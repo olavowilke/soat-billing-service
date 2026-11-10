@@ -45,25 +45,27 @@ public class EstornarPagamentoUseCase {
     }
 
     /** @param receiveCount numero desta entrega na fila (ApproximateReceiveCount), 1 na primeira. */
-    public ResultadoEstorno execute(UUID sagaId, UUID osId, int receiveCount) {
+    public ResultadoEstorno execute(UUID sagaId, String correlationId, UUID osId, int receiveCount) {
         var existente = orcamentos.buscarPorOsId(osId);
         if (existente.isEmpty()) {
             log.warn("EstornarPagamento para OS sem orcamento: osId={}", osId);
-            respostas.estornoFalhou(sagaId, osId, null, "OS sem orcamento");
+            respostas.estornoFalhou(sagaId, correlationId, osId, null, "OS sem orcamento");
             return ResultadoEstorno.DESISTIU;
         }
         Orcamento orcamento = existente.get();
+        // Com orcamento, a resposta usa o id da saga guardado nele; o do comando so vale sem orcamento.
+        String idSaga = orcamento.getCorrelationId() != null ? orcamento.getCorrelationId() : correlationId;
         Pagamento pagamento = orcamento.getPagamento().orElse(null);
         UUID pagamentoId = pagamento == null ? null : pagamento.getId();
 
         if (orcamento.getStatus() == StatusOrcamento.ESTORNADO) {
-            respostas.pagamentoEstornado(sagaId, osId, pagamentoId);
+            respostas.pagamentoEstornado(sagaId, idSaga, osId, pagamentoId);
             return ResultadoEstorno.ESTORNADO;
         }
         if (orcamento.getStatus() != StatusOrcamento.PAGO || pagamento == null) {
             log.warn("EstornarPagamento para orcamento fora de PAGO: osId={}, status={}", osId,
                     orcamento.getStatus());
-            respostas.estornoFalhou(sagaId, osId, pagamentoId,
+            respostas.estornoFalhou(sagaId, idSaga, osId, pagamentoId,
                     "orcamento nao esta pago (status " + orcamento.getStatus() + ")");
             return ResultadoEstorno.DESISTIU;
         }
@@ -71,22 +73,22 @@ public class EstornarPagamentoUseCase {
         if (mpPaymentId == null || mpPaymentId.isBlank()) {
             log.error("Pagamento pago sem mpPaymentId, estorno impossivel: osId={}, pagamentoId={}", osId,
                     pagamentoId);
-            respostas.estornoFalhou(sagaId, osId, pagamentoId, "pagamento sem identificador no provedor");
+            respostas.estornoFalhou(sagaId, idSaga, osId, pagamentoId, "pagamento sem identificador no provedor");
             return ResultadoEstorno.DESISTIU;
         }
 
         try {
             provedor.estornar(mpPaymentId, pagamentoId);
         } catch (RuntimeException e) {
-            return registrarFalha(sagaId, osId, orcamento, pagamento, receiveCount, e);
+            return registrarFalha(sagaId, idSaga, osId, orcamento, pagamento, receiveCount, e);
         }
         orcamento.estornar(clock.instant());
         orcamentos.salvar(orcamento);
-        respostas.pagamentoEstornado(sagaId, osId, pagamentoId);
+        respostas.pagamentoEstornado(sagaId, idSaga, osId, pagamentoId);
         return ResultadoEstorno.ESTORNADO;
     }
 
-    private ResultadoEstorno registrarFalha(UUID sagaId, UUID osId, Orcamento orcamento, Pagamento pagamento,
+    private ResultadoEstorno registrarFalha(UUID sagaId, String idSaga, UUID osId, Orcamento orcamento, Pagamento pagamento,
             int receiveCount, RuntimeException erro) {
         pagamento.registrarFalhaEstorno();
         orcamentos.salvar(orcamento);
@@ -101,7 +103,7 @@ public class EstornarPagamentoUseCase {
         log.error("Estorno desistido na entrega {} ({} tentativas gravadas): osId={}, pagamentoId={}", entregas,
                 tentativas, osId,
                 pagamento.getId(), erro);
-        respostas.estornoFalhou(sagaId, osId, pagamento.getId(),
+        respostas.estornoFalhou(sagaId, idSaga, osId, pagamento.getId(),
                 "provedor recusou o estorno apos " + entregas + " entregas");
         return ResultadoEstorno.DESISTIU;
     }

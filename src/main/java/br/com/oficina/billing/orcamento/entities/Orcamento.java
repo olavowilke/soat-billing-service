@@ -12,6 +12,7 @@ public class Orcamento {
     private final UUID id;
     private final UUID osId;
     private final UUID sagaId;
+    private final String correlationId;
     private final UUID clienteId;
     private StatusOrcamento status;
     private final List<ItemOrcamento> itens;
@@ -21,12 +22,13 @@ public class Orcamento {
     private final Instant criadoEm;
     private Instant atualizadoEm;
 
-    private Orcamento(UUID id, UUID osId, UUID sagaId, UUID clienteId, StatusOrcamento status,
+    private Orcamento(UUID id, UUID osId, UUID sagaId, String correlationId, UUID clienteId, StatusOrcamento status,
             List<ItemOrcamento> itens, BigDecimal valorTotal, Pagamento pagamento, long versao, Instant criadoEm,
             Instant atualizadoEm) {
         this.id = id;
         this.osId = osId;
         this.sagaId = sagaId;
+        this.correlationId = correlationId;
         this.clienteId = clienteId;
         this.status = status;
         this.itens = List.copyOf(itens);
@@ -37,7 +39,8 @@ public class Orcamento {
         this.atualizadoEm = atualizadoEm;
     }
 
-    public static Orcamento gerar(UUID osId, UUID sagaId, UUID clienteId, List<ItemOrcamento> itens, Instant agora) {
+    public static Orcamento gerar(UUID osId, UUID sagaId, String correlationId, UUID clienteId,
+            List<ItemOrcamento> itens, Instant agora) {
         if (itens == null || itens.isEmpty()) {
             throw new IllegalArgumentException("orcamento exige ao menos um item");
         }
@@ -45,14 +48,15 @@ public class Orcamento {
         if (total.signum() <= 0) {
             throw new IllegalArgumentException("valor total deve ser maior que zero");
         }
-        return new Orcamento(UUID.randomUUID(), osId, sagaId, clienteId, StatusOrcamento.GERADO, itens, total, null, 0L,
+        return new Orcamento(UUID.randomUUID(), osId, sagaId, correlationId, clienteId, StatusOrcamento.GERADO, itens, total, null, 0L,
                 agora, agora);
     }
 
-    public static Orcamento reconstituir(UUID id, UUID osId, UUID sagaId, UUID clienteId, StatusOrcamento status,
+    public static Orcamento reconstituir(UUID id, UUID osId, UUID sagaId, String correlationId,
+            UUID clienteId, StatusOrcamento status,
             List<ItemOrcamento> itens, BigDecimal valorTotal, Pagamento pagamento, long versao, Instant criadoEm,
             Instant atualizadoEm) {
-        return new Orcamento(id, osId, sagaId, clienteId, status, itens, valorTotal, pagamento, versao, criadoEm,
+        return new Orcamento(id, osId, sagaId, correlationId, clienteId, status, itens, valorTotal, pagamento, versao, criadoEm,
                 atualizadoEm);
     }
 
@@ -117,6 +121,11 @@ public class Orcamento {
 
     public UUID getSagaId() {
         return sagaId;
+    }
+
+    /** Id de correlacao da saga: toda resposta deste orcamento usa o mesmo. */
+    public String getCorrelationId() {
+        return correlationId;
     }
 
     public UUID getClienteId() {

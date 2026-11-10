@@ -91,7 +91,7 @@ class ProcessarResultadoPagamentoUseCaseTest {
         assertThat(o.getStatus()).isEqualTo(StatusOrcamento.PAGO);
         assertThat(o.getPagamento().orElseThrow().getMpPaymentId()).isEqualTo(MP_ID);
         verify(orcamentos).salvar(o);
-        verify(respostas).pagamentoConfirmado(o.getSagaId(), o.getOsId(), o.getId(), pagId(o));
+        verify(respostas).pagamentoConfirmado(o.getSagaId(), o.getCorrelationId(), o.getOsId(), o.getId(), pagId(o));
     }
 
     @Test
@@ -103,7 +103,7 @@ class ProcessarResultadoPagamentoUseCaseTest {
         assertThat(o.getStatus()).isEqualTo(StatusOrcamento.CANCELADO);
         assertThat(o.getPagamento().orElseThrow().getStatus()).isEqualTo(StatusPagamento.REJEITADO);
         verify(orcamentos).salvar(o);
-        verify(respostas).pagamentoFalhou(o.getSagaId(), o.getOsId(), o.getId(), pagId(o), "REJEITADO");
+        verify(respostas).pagamentoFalhou(o.getSagaId(), o.getCorrelationId(), o.getOsId(), o.getId(), pagId(o), "REJEITADO");
     }
 
     @Test
@@ -114,7 +114,7 @@ class ProcessarResultadoPagamentoUseCaseTest {
         assertThat(useCase.execute(pagId(o), MP_ID, SituacaoPagamentoExterno.APROVADO)).isEqualTo(IGNORADO);
 
         verify(orcamentos).salvar(o);
-        verify(respostas).pagamentoConfirmado(any(), any(), any(), any());
+        verify(respostas).pagamentoConfirmado(any(), any(), any(), any(), any());
     }
 
     @Test
@@ -124,7 +124,7 @@ class ProcessarResultadoPagamentoUseCaseTest {
 
         assertThat(useCase.execute(pagId(o), MP_ID, SituacaoPagamentoExterno.REJEITADO)).isEqualTo(IGNORADO);
 
-        verify(respostas).pagamentoFalhou(any(), any(), any(), any(), any());
+        verify(respostas).pagamentoFalhou(any(), any(), any(), any(), any(), any());
     }
 
     @Test

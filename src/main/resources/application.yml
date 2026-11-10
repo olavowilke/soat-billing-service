@@ -63,6 +63,11 @@ billing:
     modo: ${BILLING_MERCADOPAGO_MODO:fake}
     access-token: ${BILLING_MERCADOPAGO_ACCESS_TOKEN:}
     webhook-secret: ${BILLING_MERCADOPAGO_WEBHOOK_SECRET:}
+    base-url: ${BILLING_MERCADOPAGO_BASE_URL:https://api.mercadopago.com}
+    # true: payment link is the sandbox_init_point. Keep true (sandbox only).
+    sandbox: ${BILLING_MERCADOPAGO_SANDBOX:true}
+    connect-timeout: ${BILLING_MERCADOPAGO_CONNECT_TIMEOUT:PT3S}
+    read-timeout: ${BILLING_MERCADOPAGO_READ_TIMEOUT:PT10S}
   fake:
     # Only with modo=fake: makes the fake refund fail (tests the retry path).
     falhar-estorno: ${BILLING_FAKE_FALHAR_ESTORNO:false}
@@ -72,6 +77,8 @@ billing:
   url-publica: ${BILLING_URL_PUBLICA:http://localhost:8080}
   pagamento:
     prazo: ${BILLING_PAGAMENTO_PRAZO:PT30M}
+    # How often the job looks for expired payments.
+    verificacao: ${BILLING_PAGAMENTO_VERIFICACAO:PT30S}
 
 logging:
   level:

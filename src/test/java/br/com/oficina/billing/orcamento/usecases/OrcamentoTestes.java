@@ -19,7 +19,7 @@ final class OrcamentoTestes {
     }
 
     static Orcamento gerado(UUID clienteId) {
-        return Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), clienteId, List.of(
+        return Orcamento.gerar(UUID.randomUUID(), UUID.randomUUID(), "corr-" + UUID.randomUUID(), clienteId, List.of(
                 new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1,
                         new BigDecimal("100.00"))), AGORA);
     }

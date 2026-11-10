@@ -79,12 +79,12 @@ public class ProcessarResultadoPagamentoUseCase {
         if (situacao == SituacaoPagamentoExterno.APROVADO) {
             orcamento.confirmarPagamento(mpPaymentId, clock.instant());
             orcamentos.salvar(orcamento);
-            respostas.pagamentoConfirmado(orcamento.getSagaId(), orcamento.getOsId(), orcamento.getId(),
+            respostas.pagamentoConfirmado(orcamento.getSagaId(), orcamento.getCorrelationId(), orcamento.getOsId(), orcamento.getId(),
                     pagamento.getId());
         } else {
             orcamento.rejeitarPagamento(clock.instant());
             orcamentos.salvar(orcamento);
-            respostas.pagamentoFalhou(orcamento.getSagaId(), orcamento.getOsId(), orcamento.getId(),
+            respostas.pagamentoFalhou(orcamento.getSagaId(), orcamento.getCorrelationId(), orcamento.getOsId(), orcamento.getId(),
                     pagamento.getId(), "REJEITADO");
         }
         return ResultadoProcessamento.APLICADO;

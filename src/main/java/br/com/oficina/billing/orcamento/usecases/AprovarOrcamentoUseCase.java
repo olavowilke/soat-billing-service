@@ -45,7 +45,7 @@ public class AprovarOrcamentoUseCase {
         pagamento.definirCobranca(cobranca.preferenceId(), cobranca.linkPagamento());
 
         Orcamento salvo = orcamentos.salvar(orcamento);
-        respostas.orcamentoAprovado(salvo.getSagaId(), salvo.getOsId(), salvo.getId(), pagamento.getId(),
+        respostas.orcamentoAprovado(salvo.getSagaId(), salvo.getCorrelationId(), salvo.getOsId(), salvo.getId(), pagamento.getId(),
                 cobranca.linkPagamento());
         return salvo;
     }

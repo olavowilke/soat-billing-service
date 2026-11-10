@@ -30,18 +30,24 @@ public class GerarOrcamentoUseCase {
         var existente = orcamentos.buscarPorOsId(cmd.osId());
         if (existente.isPresent()) {
             var o = existente.get();
-            respostas.orcamentoGerado(cmd.sagaId(), cmd.osId(), o.getId(), o.getValorTotal());
+            respostas.orcamentoGerado(cmd.sagaId(), idDaSaga(o, cmd), cmd.osId(), o.getId(), o.getValorTotal());
             return;
         }
         Orcamento novo;
         try {
-            novo = Orcamento.gerar(cmd.osId(), cmd.sagaId(), cmd.clienteId(), montarItens(cmd), Instant.now());
+            novo = Orcamento.gerar(cmd.osId(), cmd.sagaId(), cmd.correlationId(), cmd.clienteId(), montarItens(cmd), Instant.now());
         } catch (IllegalArgumentException e) {
-            respostas.orcamentoFalhou(cmd.sagaId(), cmd.osId(), e.getMessage());
+            respostas.orcamentoFalhou(cmd.sagaId(), cmd.correlationId(), cmd.osId(), e.getMessage());
             return;
         }
         var salvo = orcamentos.salvar(novo);
-        respostas.orcamentoGerado(cmd.sagaId(), cmd.osId(), salvo.getId(), salvo.getValorTotal());
+        respostas.orcamentoGerado(cmd.sagaId(), salvo.getCorrelationId(), cmd.osId(), salvo.getId(),
+                salvo.getValorTotal());
+    }
+
+    /** O orcamento guarda o id da saga. Se a OS ja tinha orcamento, vale o dele. */
+    private static String idDaSaga(Orcamento o, GerarOrcamentoCommand cmd) {
+        return o.getCorrelationId() != null ? o.getCorrelationId() : cmd.correlationId();
     }
 
     /** Valor invalido vira IllegalArgumentException. */

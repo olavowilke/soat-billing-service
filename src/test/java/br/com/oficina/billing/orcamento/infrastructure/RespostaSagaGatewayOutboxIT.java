@@ -65,10 +65,11 @@ class RespostaSagaGatewayOutboxIT extends BillingIT {
     }
 
     @Test
-    void orcamentoGeradoGravaPayloadDoContrato() throws Exception {
-        MDC.put("correlationId", "corr-123");
+    void orcamentoGeradoGravaPayloadDoContratoComOIdDaSaga() throws Exception {
+        // O id explicito da saga vence o id da requisicao no MDC.
+        MDC.put("correlationId", "corr-da-requisicao");
 
-        var linha = gravar(() -> gateway.orcamentoGerado(sagaId, osId, orcamentoId, new BigDecimal("350.5")));
+        var linha = gravar(() -> gateway.orcamentoGerado(sagaId, "corr-123", osId, orcamentoId, new BigDecimal("350.5")));
 
         assertThat(linha.getTipo()).isEqualTo("OrcamentoGerado");
         assertThat(linha.getSagaId()).isEqualTo(sagaId);
@@ -81,8 +82,8 @@ class RespostaSagaGatewayOutboxIT extends BillingIT {
     }
 
     @Test
-    void semMdcUsaUuidComoCorrelationId() {
-        var linha = gravar(() -> gateway.orcamentoRecusado(sagaId, osId, orcamentoId));
+    void semIdDaSagaNemMdcUsaUuidComoCorrelationId() {
+        var linha = gravar(() -> gateway.orcamentoRecusado(sagaId, null, osId, orcamentoId));
 
         assertThat(UUID.fromString(linha.getCorrelationId())).isNotNull();
     }
@@ -90,13 +91,13 @@ class RespostaSagaGatewayOutboxIT extends BillingIT {
     @Test
     void cadaRespostaGravaTipoEPayloadDoContrato() throws Exception {
         var casos = Map.<String, Runnable>of(
-                "OrcamentoFalhou", () -> gateway.orcamentoFalhou(sagaId, osId, "sem itens"),
-                "OrcamentoAprovado", () -> gateway.orcamentoAprovado(sagaId, osId, orcamentoId, pagamentoId, "http://x"),
-                "OrcamentoRecusado", () -> gateway.orcamentoRecusado(sagaId, osId, orcamentoId),
-                "PagamentoConfirmado", () -> gateway.pagamentoConfirmado(sagaId, osId, orcamentoId, pagamentoId),
-                "PagamentoFalhou", () -> gateway.pagamentoFalhou(sagaId, osId, orcamentoId, pagamentoId, "EXPIRADO"),
-                "PagamentoEstornado", () -> gateway.pagamentoEstornado(sagaId, osId, pagamentoId),
-                "EstornoFalhou", () -> gateway.estornoFalhou(sagaId, osId, pagamentoId, "MP fora"));
+                "OrcamentoFalhou", () -> gateway.orcamentoFalhou(sagaId, "corr-123", osId, "sem itens"),
+                "OrcamentoAprovado", () -> gateway.orcamentoAprovado(sagaId, "corr-123", osId, orcamentoId, pagamentoId, "http://x"),
+                "OrcamentoRecusado", () -> gateway.orcamentoRecusado(sagaId, "corr-123", osId, orcamentoId),
+                "PagamentoConfirmado", () -> gateway.pagamentoConfirmado(sagaId, "corr-123", osId, orcamentoId, pagamentoId),
+                "PagamentoFalhou", () -> gateway.pagamentoFalhou(sagaId, "corr-123", osId, orcamentoId, pagamentoId, "EXPIRADO"),
+                "PagamentoEstornado", () -> gateway.pagamentoEstornado(sagaId, "corr-123", osId, pagamentoId),
+                "EstornoFalhou", () -> gateway.estornoFalhou(sagaId, "corr-123", osId, pagamentoId, "MP fora"));
         var campos = Map.of(
                 "OrcamentoFalhou", "[motivo]",
                 "OrcamentoAprovado", "[linkPagamento, orcamentoId, pagamentoId]",
@@ -117,7 +118,7 @@ class RespostaSagaGatewayOutboxIT extends BillingIT {
 
     @Test
     void semTransacaoDoChamadorFalha() {
-        assertThatThrownBy(() -> gateway.orcamentoRecusado(sagaId, osId, orcamentoId))
+        assertThatThrownBy(() -> gateway.orcamentoRecusado(sagaId, "corr-123", osId, orcamentoId))
                 .isInstanceOf(IllegalTransactionStateException.class);
     }
 }

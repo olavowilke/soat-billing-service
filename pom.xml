@@ -23,6 +23,7 @@
         <spring-cloud-aws.version>3.3.0</spring-cloud-aws.version>
         <wiremock.version>3.9.2</wiremock.version>
         <newrelic-api.version>8.16.0</newrelic-api.version>
+        <sonar-maven-plugin.version>4.0.0.4121</sonar-maven-plugin.version>
     </properties>
 
     <dependencyManagement>
@@ -141,6 +142,15 @@
     </dependencies>
 
     <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.sonarsource.scanner.maven</groupId>
+                    <artifactId>sonar-maven-plugin</artifactId>
+                    <version>${sonar-maven-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

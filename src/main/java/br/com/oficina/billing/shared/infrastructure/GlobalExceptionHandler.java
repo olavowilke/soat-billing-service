@@ -4,18 +4,23 @@ import br.com.oficina.billing.shared.entities.RecursoNaoEncontradoException;
 import br.com.oficina.billing.shared.presenters.ApiError;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.List;
 
 @RestControllerAdvice
-public class GlobalExceptionHandler {
+public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
@@ -25,8 +30,9 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of(404, "Not Found", ex.getMessage()));
     }
 
-    @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ApiError> handleValidation(MethodArgumentNotValidException ex) {
+    @Override
+    protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
         List<ApiError.FieldError> fields = ex.getBindingResult().getFieldErrors().stream()
                 .map(e -> new ApiError.FieldError(e.getField(), e.getDefaultMessage()))
                 .toList();
@@ -34,10 +40,23 @@ public class GlobalExceptionHandler {
                 .body(ApiError.of(422, "Unprocessable Entity", "Validation failed", fields));
     }
 
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiError> handleMessageNotReadable(HttpMessageNotReadableException ex) {
+    @Override
+    protected ResponseEntity<Object> handleHttpMessageNotReadable(HttpMessageNotReadableException ex,
+            HttpHeaders headers, HttpStatusCode status, WebRequest request) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiError.of(400, "Bad Request", "Corpo da requisição inválido ou ilegível"));
+    }
+
+    /** Every Spring MVC exception (404, 405, 415, 400...) keeps its own status, with an ApiError body. */
+    @Override
+    protected ResponseEntity<Object> handleExceptionInternal(Exception ex, Object body,
+            HttpHeaders headers, HttpStatusCode statusCode, WebRequest request) {
+        String detalhe = body instanceof ProblemDetail pd && pd.getDetail() != null
+                ? pd.getDetail() : ex.getMessage();
+        String razao = HttpStatus.resolve(statusCode.value()) != null
+                ? HttpStatus.valueOf(statusCode.value()).getReasonPhrase() : "Error";
+        return ResponseEntity.status(statusCode).headers(headers)
+                .body(ApiError.of(statusCode.value(), razao, detalhe));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

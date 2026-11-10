@@ -1,8 +1,10 @@
 package br.com.oficina.billing.shared.infrastructure;
 
 import br.com.oficina.billing.shared.entities.RecursoNaoEncontradoException;
+import br.com.oficina.billing.shared.presenters.ApiError;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.mock.http.MockHttpInputMessage;
@@ -38,19 +40,19 @@ class GlobalExceptionHandlerTest {
         var metodo = getClass().getDeclaredMethod("parametro", String.class);
         var ex = new MethodArgumentNotValidException(new MethodParameter(metodo, 0), binding);
 
-        var resposta = handler.handleValidation(ex);
+        var resposta = handler.handleMethodArgumentNotValid(ex, HttpHeaders.EMPTY, HttpStatus.UNPROCESSABLE_ENTITY, null);
 
         assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
-        assertThat(resposta.getBody().fields()).hasSize(1);
-        assertThat(resposta.getBody().fields().get(0).field()).isEqualTo("valor");
-        assertThat(resposta.getBody().fields().get(0).message()).isEqualTo("deve ser positivo");
+        assertThat(((ApiError) resposta.getBody()).fields()).hasSize(1);
+        assertThat(((ApiError) resposta.getBody()).fields().get(0).field()).isEqualTo("valor");
+        assertThat(((ApiError) resposta.getBody()).fields().get(0).message()).isEqualTo("deve ser positivo");
     }
 
     @Test
     void corpoIlegivelViraBadRequest() {
         var ex = new HttpMessageNotReadableException("ruim", new MockHttpInputMessage(new byte[0]));
 
-        var resposta = handler.handleMessageNotReadable(ex);
+        var resposta = handler.handleHttpMessageNotReadable(ex, HttpHeaders.EMPTY, HttpStatus.BAD_REQUEST, null);
 
         assertThat(resposta.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }

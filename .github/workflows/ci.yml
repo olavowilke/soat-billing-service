@@ -51,6 +51,56 @@ jobs:
           path: target/site/jacoco/
           retention-days: 7
 
+  owasp:
+    name: owasp
+    runs-on: ubuntu-latest
+    env:
+      NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+
+    steps:
+      - name: Aviso sem chave NVD
+        if: env.NVD_API_KEY == ''
+        run: 'echo "NVD_API_KEY ausente: OWASP pulado"'
+
+      - uses: actions/checkout@v4
+        if: env.NVD_API_KEY != ''
+
+      - name: Set up Java 21
+        if: env.NVD_API_KEY != ''
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Semana do cache NVD
+        if: env.NVD_API_KEY != ''
+        id: week
+        run: echo "week=$(date +%G-%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dos dados NVD
+        if: env.NVD_API_KEY != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-data
+          key: nvd-${{ steps.week.outputs.week }}
+          restore-keys: nvd-
+
+      - name: OWASP dependency-check
+        if: env.NVD_API_KEY != ''
+        run: >
+          mvn -B --no-transfer-progress -s settings.xml
+          org.owasp:dependency-check-maven:check
+          -DnvdApiKey=$NVD_API_KEY
+
+      - name: Upload relatorio OWASP
+        if: always() && env.NVD_API_KEY != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-report
+          path: target/dependency-check/
+          retention-days: 7
+
   terraform-validate:
     name: Terraform fmt e validate
     runs-on: ubuntu-latest

@@ -24,6 +24,7 @@
         <wiremock.version>3.9.2</wiremock.version>
         <newrelic-api.version>8.16.0</newrelic-api.version>
         <sonar-maven-plugin.version>4.0.0.4121</sonar-maven-plugin.version>
+        <dependency-check.version>12.1.0</dependency-check.version>
     </properties>
 
     <dependencyManagement>
@@ -172,6 +173,23 @@
                         </goals>
                     </execution>
                 </executions>
+            </plugin>
+
+            <!-- OWASP Dependency-Check: so roda por chamada explicita (CI job owasp) -->
+            <plugin>
+                <groupId>org.owasp</groupId>
+                <artifactId>dependency-check-maven</artifactId>
+                <version>${dependency-check.version}</version>
+                <configuration>
+                    <formats>
+                        <format>HTML</format>
+                        <format>JSON</format>
+                    </formats>
+                    <outputDirectory>${project.build.directory}/dependency-check</outputDirectory>
+                    <failBuildOnCVSS>9</failBuildOnCVSS>
+                    <assemblyAnalyzerEnabled>false</assemblyAnalyzerEnabled>
+                    <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
+                </configuration>
             </plugin>
 
             <plugin>

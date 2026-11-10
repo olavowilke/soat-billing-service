@@ -110,20 +110,33 @@ class MetricasFilasTest {
         lenta.atualizar();
 
         assertThat(registry.get("oficina.fila.dlq.mensagens").tag("fila", "fila-lenta").gauge().value()).isZero();
-        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).hasSize(1);
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).singleElement()
+                .satisfies(e -> assertThat(e.getFormattedMessage()).contains("TimeoutException").doesNotContain("null"));
     }
 
     @Test
-    void falhaSemMensagemLogaONomeDaExcecao() {
-        filaTem("1");
-        when(sqs.getQueueAttributes(any(GetQueueAttributesRequest.class)))
-                .thenReturn(CompletableFuture.failedFuture(new IllegalStateException()));
+    void timeoutCancelaAChamadaPendente() {
+        MetricasFilas lenta = new MetricasFilas(sqs, registry, "fila-lenta", Duration.ofMillis(50));
+        CompletableFuture<GetQueueAttributesResponse> pendente = new CompletableFuture<>();
+        when(sqs.getQueueAttributes(any(GetQueueAttributesRequest.class))).thenReturn(pendente);
 
-        metricas.atualizar();
+        lenta.atualizar();
 
-        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN)
-                .singleElement().satisfies(e -> assertThat(e.getFormattedMessage())
-                        .contains("IllegalStateException").doesNotContain("null"));
+        assertThat(pendente).isCancelled();
+    }
+
+    @Test
+    void threadInterrompidaLogaUmWarnEPreservaAInterrupcao() {
+        when(sqs.getQueueAttributes(any(GetQueueAttributesRequest.class))).thenReturn(new CompletableFuture<>());
+        Thread.currentThread().interrupt();
+        try {
+            metricas.atualizar();
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+
+        assertThat(logs.list).filteredOn(e -> e.getLevel() == Level.WARN).hasSize(1);
     }
 
     @Test

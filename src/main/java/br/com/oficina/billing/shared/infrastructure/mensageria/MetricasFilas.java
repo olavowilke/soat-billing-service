@@ -14,7 +14,9 @@ import software.amazon.awssdk.services.sqs.model.GetQueueUrlRequest;
 import software.amazon.awssdk.services.sqs.model.QueueAttributeName;
 
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -52,22 +54,36 @@ public class MetricasFilas {
     public void atualizar() {
         try {
             if (url == null) {
-                url = sqs.getQueueUrl(GetQueueUrlRequest.builder().queueName(fila).build())
-                        .get(timeout.toMillis(), TimeUnit.MILLISECONDS).queueUrl();
+                url = aguardar(sqs.getQueueUrl(GetQueueUrlRequest.builder().queueName(fila).build())).queueUrl();
             }
-            String valor = sqs.getQueueAttributes(GetQueueAttributesRequest.builder()
+            String valor = aguardar(sqs.getQueueAttributes(GetQueueAttributesRequest.builder()
                             .queueUrl(url)
                             .attributeNames(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES)
-                            .build())
-                    .get(timeout.toMillis(), TimeUnit.MILLISECONDS).attributes().get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES);
+                            .build())).attributes().get(QueueAttributeName.APPROXIMATE_NUMBER_OF_MESSAGES);
             mensagens.set(Long.parseLong(valor));
             emFalha.set(false);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            avisar(e);
         } catch (Exception e) {
-            if (emFalha.compareAndSet(false, true)) {
-                log.warn("Não foi possível ler o tamanho da DLQ {}; mantém o último valor: {}", fila, (e.getMessage() != null ? e.getMessage() : e.getClass().getName()));
-            }
+            avisar(e);
+        }
+    }
+
+    /** Espera com prazo; se estoura, cancela a chamada para não deixar trabalho pendente. */
+    private <T> T aguardar(CompletableFuture<T> chamada) throws Exception {
+        try {
+            return chamada.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            chamada.cancel(true);
+            throw e;
+        }
+    }
+
+    private void avisar(Exception e) {
+        if (emFalha.compareAndSet(false, true)) {
+            String motivo = e.getMessage() != null ? e.getMessage() : e.getClass().getName();
+            log.warn("Não foi possível ler o tamanho da DLQ {}; mantém o último valor: {}", fila, motivo);
         }
     }
 }

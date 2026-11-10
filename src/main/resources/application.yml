@@ -57,6 +57,7 @@ billing:
     intervalo: ${BILLING_OUTBOX_INTERVALO:PT1S}
   filas:
     comandos: ${BILLING_FILAS_COMANDOS:oficina-homolog-billing-commands}
+    comandos-dlq: ${BILLING_FILAS_COMANDOS_DLQ:oficina-homolog-billing-commands-dlq}
     respostas: ${BILLING_FILAS_RESPOSTAS:oficina-homolog-os-saga-replies}
   mercadopago:
     # fake (default) or real. Sandbox only.

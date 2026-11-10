@@ -11,6 +11,7 @@ data:
   AWS_REGION: "us-east-1"
   # Nomes das filas (nao URLs): o Spring Cloud AWS resolve o nome em URL.
   BILLING_FILAS_COMANDOS: "oficina-homolog-billing-commands"
+  BILLING_FILAS_COMANDOS_DLQ: "oficina-homolog-billing-commands-dlq"
   BILLING_FILAS_RESPOSTAS: "oficina-homolog-os-saga-replies"
   # fake ate o usuario gravar as credenciais; real exige token e segredo do webhook.
   BILLING_MERCADOPAGO_MODO: "fake"

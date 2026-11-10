@@ -66,6 +66,9 @@ billing:
   fake:
     # Only with modo=fake: makes the fake refund fail (tests the retry path).
     falhar-estorno: ${BILLING_FAKE_FALHAR_ESTORNO:false}
+  estorno:
+    # Must match maxReceiveCount of the commands queue redrive policy.
+    max-entregas: ${BILLING_ESTORNO_MAX_ENTREGAS:3}
   url-publica: ${BILLING_URL_PUBLICA:http://localhost:8080}
   pagamento:
     prazo: ${BILLING_PAGAMENTO_PRAZO:PT30M}

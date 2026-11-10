@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.newrelic.api.agent.Trace;
 import io.awspring.cloud.sqs.annotation.SqsListener;
+import io.awspring.cloud.sqs.listener.SqsHeaders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -20,6 +21,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -61,7 +63,9 @@ public class ComandosListener {
     @Trace(dispatcher = true)
     @SqsListener(value = "${billing.filas.comandos}", acknowledgementMode = "ON_SUCCESS")
     public void receber(String corpo,
-            @Header(name = TracingMensagens.ATRIBUTO_NEWRELIC, required = false) String newrelic) {
+            @Header(name = TracingMensagens.ATRIBUTO_NEWRELIC, required = false) String newrelic,
+            @Header(name = SqsHeaders.MessageSystemAttributes.SQS_APPROXIMATE_RECEIVE_COUNT,
+                    required = false) String receiveCount) {
         TracingMensagens.aceitar(newrelic == null ? Map.of() : Map.of(TracingMensagens.ATRIBUTO_NEWRELIC, newrelic));
         MensagemSaga mensagem = ler(corpo);
         try {
@@ -70,7 +74,7 @@ public class ComandosListener {
             }
             MDC.put("sagaId", String.valueOf(mensagem.sagaId()));
             if (TIPO_ESTORNAR_PAGAMENTO.equals(mensagem.type())) {
-                receberEstorno(mensagem);
+                receberEstorno(mensagem, contarEntregas(receiveCount));
             } else {
                 tx.executeWithoutResult(status -> processar(mensagem));
             }
@@ -99,28 +103,38 @@ public class ComandosListener {
         }
     }
 
-    private void receberEstorno(MensagemSaga mensagem) {
+    private void receberEstorno(MensagemSaga mensagem, int receiveCount) {
         log.info("EstornarPagamento: osId={}, motivo={}", mensagem.osId(), mensagem.payload().path("motivo").asText(""));
-        ResultadoEstorno resultado = tx.execute(status -> estornar(status, mensagem));
-        if (resultado == ResultadoEstorno.TENTAR_DE_NOVO) {
+        Optional<ResultadoEstorno> resultado = tx.execute(status -> estornar(status, mensagem, receiveCount));
+        if (resultado.orElse(null) == ResultadoEstorno.TENTAR_DE_NOVO) {
             // Fora da transacao: a tentativa ja foi gravada. A excecao deixa a mensagem na fila para nova entrega.
             throw new EstornoPendenteException(mensagem.osId());
         }
     }
 
-    private ResultadoEstorno estornar(TransactionStatus status, MensagemSaga mensagem) {
+    /** Vazio quando a mensagem ja foi processada: nada a fazer. */
+    private Optional<ResultadoEstorno> estornar(TransactionStatus status, MensagemSaga mensagem, int receiveCount) {
         if (processadas.existsById(mensagem.messageId())) {
             log.info("Mensagem ja processada, ignorada: messageId={}", mensagem.messageId());
-            return ResultadoEstorno.ESTORNADO;
+            return Optional.empty();
         }
-        ResultadoEstorno resultado = estornarPagamento.execute(mensagem.sagaId(), mensagem.osId());
+        ResultadoEstorno resultado = estornarPagamento.execute(mensagem.sagaId(), mensagem.osId(), receiveCount);
         if (resultado != ResultadoEstorno.TENTAR_DE_NOVO
                 && processadas.registrar(mensagem.messageId(), Instant.now()) == 0) {
             // Outra entrega da mesma mensagem registrou antes. Desfaz a resposta duplicada.
             log.info("Mensagem ja processada em paralelo, resposta descartada: messageId={}", mensagem.messageId());
             status.setRollbackOnly();
         }
-        return resultado;
+        return Optional.of(resultado);
+    }
+
+    /** 0 quando o SQS nao manda o contador: o caso de uso usa as tentativas gravadas. */
+    private static int contarEntregas(String receiveCount) {
+        try {
+            return receiveCount == null ? 0 : Integer.parseInt(receiveCount.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** Pede nova entrega: o provedor falhou e ainda ha tentativas. */

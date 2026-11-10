@@ -19,13 +19,13 @@ import java.util.UUID;
  * <li>Orcamento ja ESTORNADO: repete a resposta PagamentoEstornado.</li>
  * <li>Orcamento que nao esta PAGO (ou OS sem orcamento): EstornoFalhou e DESISTIU. Repetir nao ajuda.</li>
  * <li>Pagamento sem mpPaymentId: EstornoFalhou e DESISTIU.</li>
- * <li>Falha do provedor: conta a tentativa e grava. Com menos de 3 tentativas devolve TENTAR_DE_NOVO,
- * sem resposta. Na terceira publica EstornoFalhou e devolve DESISTIU.</li>
+ * <li>Falha do provedor: conta a tentativa (auditoria) e grava. Se a entrega e a ultima que a fila permite
+ * (receiveCount &gt;= maxEntregas), publica EstornoFalhou e devolve DESISTIU. Antes disso devolve TENTAR_DE_NOVO,
+ * sem resposta. A decisao usa o numero de entregas da fila, nao so as tentativas gravadas: uma entrega que nao
+ * grava (timeout, erro de banco) tambem gasta um recebimento, e a mensagem iria para a DLQ sem resposta.</li>
  * </ul>
  */
 public class EstornarPagamentoUseCase {
-
-    static final int MAX_TENTATIVAS = 3;
 
     private static final Logger log = LoggerFactory.getLogger(EstornarPagamentoUseCase.class);
 
@@ -33,16 +33,19 @@ public class EstornarPagamentoUseCase {
     private final PagamentoGateway provedor;
     private final RespostaSagaGateway respostas;
     private final Clock clock;
+    private final int maxEntregas;
 
     public EstornarPagamentoUseCase(OrcamentoGateway orcamentos, PagamentoGateway provedor,
-            RespostaSagaGateway respostas, Clock clock) {
+            RespostaSagaGateway respostas, Clock clock, int maxEntregas) {
         this.orcamentos = orcamentos;
         this.provedor = provedor;
         this.respostas = respostas;
         this.clock = clock;
+        this.maxEntregas = maxEntregas;
     }
 
-    public ResultadoEstorno execute(UUID sagaId, UUID osId) {
+    /** @param receiveCount numero desta entrega na fila (ApproximateReceiveCount), 1 na primeira. */
+    public ResultadoEstorno execute(UUID sagaId, UUID osId, int receiveCount) {
         var existente = orcamentos.buscarPorOsId(osId);
         if (existente.isEmpty()) {
             log.warn("EstornarPagamento para OS sem orcamento: osId={}", osId);
@@ -75,7 +78,7 @@ public class EstornarPagamentoUseCase {
         try {
             provedor.estornar(mpPaymentId, pagamentoId);
         } catch (RuntimeException e) {
-            return registrarFalha(sagaId, osId, orcamento, pagamento, e);
+            return registrarFalha(sagaId, osId, orcamento, pagamento, receiveCount, e);
         }
         orcamento.estornar(clock.instant());
         orcamentos.salvar(orcamento);
@@ -84,19 +87,22 @@ public class EstornarPagamentoUseCase {
     }
 
     private ResultadoEstorno registrarFalha(UUID sagaId, UUID osId, Orcamento orcamento, Pagamento pagamento,
-            RuntimeException erro) {
+            int receiveCount, RuntimeException erro) {
         pagamento.registrarFalhaEstorno();
         orcamentos.salvar(orcamento);
         int tentativas = pagamento.getTentativasEstorno();
-        if (tentativas < MAX_TENTATIVAS) {
-            log.warn("Estorno falhou no provedor, tentativa {} de {}: osId={}, erro={}", tentativas,
-                    MAX_TENTATIVAS, osId, erro.getMessage());
+        // Se o contador do SQS faltar (0), as tentativas gravadas servem de piso.
+        int entregas = Math.max(receiveCount, tentativas);
+        if (entregas < maxEntregas) {
+            log.warn("Estorno falhou no provedor, entrega {} de {}: osId={}, erro={}", entregas,
+                    maxEntregas, osId, erro.getMessage());
             return ResultadoEstorno.TENTAR_DE_NOVO;
         }
-        log.error("Estorno desistido apos {} tentativas: osId={}, pagamentoId={}", tentativas, osId,
+        log.error("Estorno desistido na entrega {} ({} tentativas gravadas): osId={}, pagamentoId={}", entregas,
+                tentativas, osId,
                 pagamento.getId(), erro);
         respostas.estornoFalhou(sagaId, osId, pagamento.getId(),
-                "provedor recusou o estorno apos " + tentativas + " tentativas");
+                "provedor recusou o estorno apos " + entregas + " entregas");
         return ResultadoEstorno.DESISTIU;
     }
 }

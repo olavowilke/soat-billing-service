@@ -1,5 +1,6 @@
 package br.com.oficina.billing.shared;
 
+import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import io.awspring.cloud.sqs.operations.SqsTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -36,6 +37,10 @@ public abstract class BillingIT {
     /** Spy no provedor fake: os testes de estorno forcam falha. Fica aqui pelo mesmo motivo do spy acima. */
     @MockitoSpyBean
     protected PagamentoGateway pagamentoGateway;
+
+    /** Spy no gateway de orcamento: os testes de estorno forcam falha de banco na gravacao. */
+    @MockitoSpyBean
+    protected OrcamentoGateway orcamentoGateway;
 
     static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine")
             .withDatabaseName("billing_test")

@@ -4,6 +4,7 @@ import br.com.oficina.billing.orcamento.entities.ItemOrcamento;
 import br.com.oficina.billing.orcamento.entities.Orcamento;
 import br.com.oficina.billing.orcamento.entities.TipoItem;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
+import br.com.oficina.billing.orcamento.usecases.EstornarPagamentoUseCase;
 import br.com.oficina.billing.shared.BillingIT;
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
@@ -64,6 +65,7 @@ class ComandosListenerIT extends BillingIT {
     void preparar() {
         jdbc.update("delete from outbox");
         loggers = List.of((Logger) LoggerFactory.getLogger(ComandosListener.class),
+                (Logger) LoggerFactory.getLogger(EstornarPagamentoUseCase.class),
                 (Logger) LoggerFactory.getLogger(
                         "io.awspring.cloud.sqs.listener.sink.AbstractMessageProcessingPipelineSink"));
         logs = new ListAppender<>();
@@ -310,6 +312,32 @@ class ComandosListenerIT extends BillingIT {
         assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
                 Integer.class, messageId)).isEqualTo(1);
         verify(pagamentoGateway, times(3)).estornar(anyString(), any());
+        assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                && e.getLoggerName().equals(EstornarPagamentoUseCase.class.getName()));
+    }
+
+    @Test
+    void entregaQueNaoGravaTentativaConsomeRecebimentoEAindaPublicaEstornoFalhou() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        criarOrcamentoPago(os, "fake-mp-4");
+        doThrow(new IllegalStateException("provedor fora")).when(pagamentoGateway).estornar(anyString(), any());
+        // A primeira gravacao da tentativa falha (erro de banco simulado): essa entrega queima um recebimento do SQS.
+        doThrow(new IllegalStateException("falha simulada no banco")).doCallRealMethod().when(orcamentos)
+                .salvar(any());
+
+        enviar(comando(messageId, saga, os, "EstornarPagamento", "corr-" + saga, motivo()), "EstornarPagamento");
+
+        await().atMost(Duration.ofSeconds(30)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("EstornoFalhou");
+        // So 2 entregas gravaram a tentativa, mas a 3a (ultima) desistiu mesmo assim.
+        assertThat(jdbc.queryForObject("select p.tentativas_estorno from pagamentos p "
+                + "join orcamentos o on o.id = p.orcamento_id where o.os_id = ?", Integer.class, os)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
     }
 
     @Test

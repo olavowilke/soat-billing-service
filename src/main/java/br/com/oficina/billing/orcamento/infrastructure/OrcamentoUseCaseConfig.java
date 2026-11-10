@@ -5,7 +5,7 @@ import br.com.oficina.billing.orcamento.gateways.PagamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
 import br.com.oficina.billing.orcamento.usecases.EstornarPagamentoUseCase;
 import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoUseCase;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -22,12 +22,12 @@ class OrcamentoUseCaseConfig {
 
     @Bean
     EstornarPagamentoUseCase estornarPagamentoUseCase(OrcamentoGateway orcamentos, PagamentoGateway pagamentos,
-            RespostaSagaGateway respostas, Clock clock) {
-        return new EstornarPagamentoUseCase(orcamentos, pagamentos, respostas, clock);
+            RespostaSagaGateway respostas, Clock clock,
+            @Value("${billing.estorno.max-entregas:3}") int maxEntregas) {
+        return new EstornarPagamentoUseCase(orcamentos, pagamentos, respostas, clock, maxEntregas);
     }
 
     @Bean
-    @ConditionalOnMissingBean
     Clock clock() {
         return Clock.systemUTC();
     }

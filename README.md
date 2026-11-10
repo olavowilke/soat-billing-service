@@ -40,6 +40,8 @@ O corpo do orçamento (`OrcamentoResponse`) traz `id`, `osId`, `clienteId`, `sta
 
 ### Swagger
 
+As rotas de equipe não passam pelo gateway. O botão "Try it out" só funciona nelas por port-forward.
+
 Pelo API Gateway:
 
 ```
@@ -112,7 +114,8 @@ export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test
 ./mvnw -s settings.xml spring-boot:run
 ```
 
-A aplicação sobe em `http://localhost:8080/api/billing`. O listener cria a fila de comandos vazia no LocalStack.
+A aplicação sobe em `http://localhost:8080/api/billing`.
+O listener cria a fila de comandos vazia no LocalStack.
 A DLQ não nasce sozinha. O job de métricas avisa no log e segue.
 
 | Variável | Padrão | Para quê |
@@ -125,14 +128,14 @@ A DLQ não nasce sozinha. O job de métricas avisa no log e segue.
 | `BILLING_MERCADOPAGO_MODO` | `fake` | `fake` simula o pagamento. `real` usa o sandbox |
 | `BILLING_MERCADOPAGO_ACCESS_TOKEN`, `BILLING_MERCADOPAGO_WEBHOOK_SECRET` | vazio | Obrigatórios com `real`. Sem eles a aplicação não sobe |
 | `BILLING_URL_PUBLICA` | `http://localhost:8080` | Base do link de pagamento e da URL do webhook |
-| `BILLING_PAGAMENTO_PRAZO` | `PT30M` | Prazo do pagamento antes de expirar |
-| `BILLING_PAGAMENTO_VERIFICACAO` | `PT30S` | Intervalo do job que expira pagamentos |
+| `BILLING_PAGAMENTO_PRAZO` | `PT30M` (homolog: `PT2M`) | Prazo do pagamento antes de expirar |
+| `BILLING_PAGAMENTO_VERIFICACAO` | `PT30S` (homolog: `PT15S`) | Intervalo do job que expira pagamentos |
 | `BILLING_ESTORNO_MAX_ENTREGAS` | `3` | Entregas antes de `EstornoFalhou` |
 | `BILLING_FAKE_FALHAR_ESTORNO` | `false` | No modo `fake`, faz o estorno falhar (teste da regra de entregas) |
 | `BILLING_OUTBOX_INTERVALO` | `PT1S` | Intervalo do envio do outbox |
 | `AWS_REGION` | `us-east-1` | Região |
 
-Para encurtar o prazo na demo, use `BILLING_PAGAMENTO_PRAZO=PT1M`.
+O homolog já usa `PT2M` e `PT15S` no ConfigMap, para a demo ser curta.
 
 ## Testes e cobertura
 
@@ -145,14 +148,16 @@ Para encurtar o prazo na demo, use `BILLING_PAGAMENTO_PRAZO=PT1M`.
 - Relatório JaCoCo local: `target/site/jacoco/index.html`, depois de `./mvnw verify`.
 - Cobertura no Sonar: [![Cobertura](https://sonarcloud.io/api/project_badges/measure?project=olavowilke_soat-billing-service&metric=coverage)](https://sonarcloud.io/project/overview?id=olavowilke_soat-billing-service)
 
-A captura do relatório JaCoCo entra aqui depois do primeiro `verify` limpo.
+Última medição (`./mvnw verify` no HEAD da branch `feat/fase4-metricas`): **97% das linhas (1.006 de 1.036) e 97% das instruções**.
+
+![Relatório JaCoCo](docs/cobertura/jacoco.png)
 
 ## Deploy
 
 O fluxo vive em `.github/workflows/`.
 
 1. **CI** (PR e push em `main`). Jobs: `build-and-test` (`mvn verify`, kustomize e Sonar), `owasp` e `Terraform fmt e validate`.
-2. **Branch protegida.** `main` exige PR e os checks do CI.
+2. **Branch protegida.** `main` exige PR e o check `build-and-test`. Os jobs `owasp` e `Terraform fmt e validate` são informativos.
 3. **CD** (push em `main`). Só roda se a variável `DEPLOY_HOMOLOG` for `true`.
    - Job `terraform`: cria fila e DLQ, RDS, ECR, role do pod, listener do NLB (porta 8081) e rotas do gateway.
    - Job `build-and-deploy`: cria o Secret `billing-secrets`, envia a imagem `sha-<git sha>` ao ECR, aplica `k8s/overlays/homolog`, espera o rollout e chama `/api/billing/actuator/health` pelo gateway.
@@ -167,8 +172,8 @@ O fluxo vive em `.github/workflows/`.
 | `SONAR_ORGANIZATION` | Variable | Organização do SonarCloud |
 | `NVD_API_KEY` | Secret | Chave gratuita da NVD. Sem ela, o job `owasp` é pulado |
 
-O Terraform cria o segredo `oficina/homolog/billing/mercadopago` no Secrets Manager com valores `CHANGE_ME`.
-Preencha `access_token` e `webhook_secret` ali. O ConfigMap fixa `BILLING_MERCADOPAGO_MODO=fake`.
+O Terraform cria o segredo `oficina/homolog/billing/mercadopago` no Secrets Manager.
+Os valores iniciais são `CHANGE_ME`. Preencha `access_token` e `webhook_secret` ali. O ConfigMap fixa `BILLING_MERCADOPAGO_MODO=fake`.
 Para usar o sandbox, mude o modo para `real` em `k8s/base/configmap.yaml`.
 
 ## Operação

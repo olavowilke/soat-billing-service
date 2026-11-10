@@ -45,3 +45,24 @@ jobs:
           name: jacoco-report
           path: target/site/jacoco/
           retention-days: 7
+
+  terraform-validate:
+    name: Terraform fmt e validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: terraform init
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate

@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billing-service-config
+  namespace: billing
+  labels:
+    app.kubernetes.io/name: billing-service
+    app.kubernetes.io/part-of: oficina
+data:
+  SERVER_PORT: "8080"
+  AWS_REGION: "us-east-1"
+  # Nomes das filas (nao URLs): o Spring Cloud AWS resolve o nome em URL.
+  BILLING_FILAS_COMANDOS: "oficina-homolog-billing-commands"
+  BILLING_FILAS_RESPOSTAS: "oficina-homolog-os-saga-replies"
+  # fake ate o usuario gravar as credenciais; real exige token e segredo do webhook.
+  BILLING_MERCADOPAGO_MODO: "fake"
+  # Prazo curto para a demo.
+  BILLING_PAGAMENTO_PRAZO: "PT2M"
+  BILLING_PAGAMENTO_VERIFICACAO: "PT15S"
+  # BILLING_URL_PUBLICA nao fica aqui: o CD le o endpoint do gateway no SSM e
+  # cria o ConfigMap billing-service-runtime (um ConfigMap nao le o SSM).
+  NEW_RELIC_APP_NAME: "billing-service"

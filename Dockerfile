@@ -32,7 +32,8 @@ RUN apk add --no-cache curl unzip \
 FROM eclipse-temurin:21-jre-alpine
 WORKDIR /app
 
-RUN addgroup -S oficina && adduser -S oficina -G oficina
+# UID fixo: o runAsUser do Deployment (k8s/base/deployment.yaml) precisa bater.
+RUN addgroup -S oficina && adduser -S -u 10001 oficina -G oficina
 
 COPY --from=builder /app/target/*.jar app.jar
 COPY --from=newrelic-agent /tmp/newrelic.jar newrelic.jar

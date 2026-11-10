@@ -1,0 +1,14 @@
+# maxUnavailable 1 com uma replica: a drenagem de no nunca fica bloqueada.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: billing-service
+  namespace: billing
+  labels:
+    app.kubernetes.io/name: billing-service
+    app.kubernetes.io/part-of: oficina
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: billing-service

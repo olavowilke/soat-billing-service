@@ -28,6 +28,11 @@ jobs:
       - name: Build and test
         run: mvn verify --batch-mode --no-transfer-progress -s settings.xml
 
+      - name: Render kustomize (homolog)
+        run: |
+          kubectl kustomize k8s/overlays/homolog > /tmp/homolog.yaml
+          grep -q "nodePort[:] 30081" /tmp/homolog.yaml
+
       - name: Sonar analysis
         if: env.SONAR_TOKEN != ''
         run: >

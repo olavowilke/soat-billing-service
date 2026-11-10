@@ -1,7 +1,5 @@
 package br.com.oficina.billing.shared.infrastructure.mensageria;
 
-import br.com.oficina.billing.orcamento.entities.ItemOrcamento;
-import br.com.oficina.billing.orcamento.entities.TipoItem;
 import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoCommand;
 import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoUseCase;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -15,7 +13,6 @@ import org.springframework.messaging.handler.annotation.Header;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -90,8 +87,8 @@ public class ComandosListener {
         try {
             MensagemSaga mensagem = mapper.readValue(corpo, MensagemSaga.class);
             if (mensagem.messageId() == null || mensagem.sagaId() == null || mensagem.osId() == null
-                    || mensagem.type() == null) {
-                throw new IllegalArgumentException("Envelope sem messageId, sagaId, osId ou type");
+                    || mensagem.type() == null || mensagem.payload() == null || mensagem.payload().isNull()) {
+                throw new IllegalArgumentException("Envelope sem messageId, sagaId, osId, type ou payload");
             }
             return mensagem;
         } catch (Exception e) {
@@ -102,11 +99,11 @@ public class ComandosListener {
 
     private GerarOrcamentoCommand paraGerarOrcamento(MensagemSaga mensagem) {
         JsonNode payload = mensagem.payload();
-        List<ItemOrcamento> itens = new ArrayList<>();
+        List<GerarOrcamentoCommand.ItemComando> itens = new ArrayList<>();
         for (JsonNode i : payload.path("itens")) {
-            itens.add(new ItemOrcamento(TipoItem.valueOf(i.path("tipo").asText()),
-                    UUID.fromString(i.path("referenciaId").asText()), i.path("descricao").asText(null),
-                    i.path("quantidade").asInt(), new BigDecimal(i.path("valorUnitario").asText())));
+            itens.add(new GerarOrcamentoCommand.ItemComando(i.path("tipo").asText(null),
+                    i.path("referenciaId").asText(null), i.path("descricao").asText(null),
+                    i.path("quantidade").asInt(), i.path("valorUnitario").asText(null)));
         }
         return new GerarOrcamentoCommand(mensagem.sagaId(), mensagem.osId(),
                 UUID.fromString(payload.path("clienteId").asText()), itens);

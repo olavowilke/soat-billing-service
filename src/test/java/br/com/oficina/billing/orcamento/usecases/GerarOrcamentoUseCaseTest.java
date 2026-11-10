@@ -5,6 +5,7 @@ import br.com.oficina.billing.orcamento.entities.Orcamento;
 import br.com.oficina.billing.orcamento.entities.TipoItem;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
+import br.com.oficina.billing.orcamento.usecases.GerarOrcamentoCommand.ItemComando;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -33,8 +34,18 @@ class GerarOrcamentoUseCaseTest {
     private final RespostaSagaGateway respostas = mock(RespostaSagaGateway.class);
     private final GerarOrcamentoUseCase useCase = new GerarOrcamentoUseCase(orcamentos, respostas);
 
-    private static ItemOrcamento item(String valor) {
-        return new ItemOrcamento(TipoItem.SERVICO, UUID.randomUUID(), "Troca de oleo", 1, new BigDecimal(valor));
+    private static ItemComando cru(String valor) {
+        return new ItemComando("SERVICO", UUID.randomUUID().toString(), "Troca de oleo", 1, valor);
+    }
+
+    private void esperaFalhou(ItemComando... itens) {
+        when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.empty());
+
+        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(itens)));
+
+        verify(respostas).orcamentoFalhou(eq(SAGA), eq(OS), anyString());
+        verify(orcamentos, never()).salvar(any());
+        verify(respostas, never()).orcamentoGerado(any(), any(), any(), any());
     }
 
     @Test
@@ -42,7 +53,7 @@ class GerarOrcamentoUseCaseTest {
         when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.empty());
         when(orcamentos.salvar(any())).thenAnswer(i -> i.getArgument(0));
 
-        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(item("350.00"))));
+        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(cru("350.00"))));
 
         var salvo = ArgumentCaptor.forClass(Orcamento.class);
         verify(orcamentos).salvar(salvo.capture());
@@ -53,31 +64,70 @@ class GerarOrcamentoUseCaseTest {
 
     @Test
     void itensVaziosPublicaFalhou() {
+        esperaFalhou();
+    }
+
+    @Test
+    void itensNulosPublicaFalhou() {
         when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.empty());
 
-        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of()));
+        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, null));
 
         verify(respostas).orcamentoFalhou(eq(SAGA), eq(OS), anyString());
-        verify(orcamentos, never()).salvar(any());
-        verify(respostas, never()).orcamentoGerado(any(), any(), any(), any());
     }
 
     @Test
     void totalZeradoPublicaFalhou() {
-        when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.empty());
+        esperaFalhou(cru("0.00"));
+    }
 
-        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(item("0.00"))));
+    @Test
+    void quantidadeZeroPublicaFalhou() {
+        esperaFalhou(new ItemComando("SERVICO", UUID.randomUUID().toString(), "x", 0, "10.00"));
+    }
 
-        verify(respostas).orcamentoFalhou(eq(SAGA), eq(OS), anyString());
-        verify(orcamentos, never()).salvar(any());
+    @Test
+    void valorNegativoPublicaFalhou() {
+        esperaFalhou(cru("-1.00"));
+    }
+
+    @Test
+    void valorNaoNumericoPublicaFalhou() {
+        esperaFalhou(cru("abc"));
+    }
+
+    @Test
+    void valorAusentePublicaFalhou() {
+        esperaFalhou(cru(null));
+    }
+
+    @Test
+    void descricaoEmBrancoPublicaFalhou() {
+        esperaFalhou(new ItemComando("SERVICO", UUID.randomUUID().toString(), " ", 1, "10.00"));
+    }
+
+    @Test
+    void tipoInvalidoPublicaFalhou() {
+        esperaFalhou(new ItemComando("OUTRO", UUID.randomUUID().toString(), "x", 1, "10.00"));
+    }
+
+    @Test
+    void tipoAusentePublicaFalhou() {
+        esperaFalhou(new ItemComando(null, UUID.randomUUID().toString(), "x", 1, "10.00"));
+    }
+
+    @Test
+    void referenciaInvalidaPublicaFalhou() {
+        esperaFalhou(new ItemComando("PECA", "nao-uuid", "x", 1, "10.00"));
     }
 
     @Test
     void osJaComOrcamentoReenviaGerado() {
-        var existente = Orcamento.gerar(OS, SAGA, CLIENTE, List.of(item("100.00")), Instant.now());
+        var existente = Orcamento.gerar(OS, SAGA, CLIENTE, List.of(new ItemOrcamento(TipoItem.SERVICO,
+                UUID.randomUUID(), "x", 1, new BigDecimal("100.00"))), Instant.now());
         when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.of(existente));
 
-        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(item("999.00"))));
+        useCase.execute(new GerarOrcamentoCommand(SAGA, OS, CLIENTE, List.of(cru("999.00"))));
 
         verify(respostas).orcamentoGerado(SAGA, OS, existente.getId(), new BigDecimal("100.00"));
         verify(orcamentos, never()).salvar(any());

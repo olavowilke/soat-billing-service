@@ -173,6 +173,91 @@ class ComandosListenerIT extends BillingIT {
                 && e.getFormattedMessage().contains("Mensagem invalida"));
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void itemComQuantidadeZeroGeraOrcamentoFalhouEConfirmaMensagem() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        var payload = itensValidos();
+        ((Map<String, Object>) ((List<?>) payload.get("itens")).get(0)).put("quantidade", 0);
+
+        enviar(comando(messageId, saga, os, "GerarOrcamento", "corr-" + saga, payload), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoFalhou");
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isZero();
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        assertThat(new ArrayList<>(logs.list)).noneMatch(e -> e.getLevel() == Level.ERROR);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void valorUnitarioInvalidoGeraOrcamentoFalhou() throws Exception {
+        var saga = UUID.randomUUID();
+        var payload = itensValidos();
+        ((Map<String, Object>) ((List<?>) payload.get("itens")).get(0)).put("valorUnitario", "abc");
+
+        enviar(comando(UUID.randomUUID(), saga, UUID.randomUUID(), "GerarOrcamento", "corr-" + saga, payload),
+                "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).until(() -> linhasOutbox(saga) == 1);
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoFalhou");
+    }
+
+    @Test
+    void falhaDepoisDoRegistroDesfazMarcaERedeliveryProcessa() throws Exception {
+        var saga = UUID.randomUUID();
+        var os = UUID.randomUUID();
+        var messageId = UUID.randomUUID();
+        // A gravacao da resposta na outbox falha depois do registro. O teste solta a falha apos o primeiro erro.
+        jdbc.execute("create or replace function falhar_outbox() returns trigger as $$ begin "
+                + "raise exception 'falha simulada'; end $$ language plpgsql");
+        jdbc.execute("create trigger t_falhar_outbox before insert on outbox for each row "
+                + "when (NEW.saga_id = '" + saga + "') execute function falhar_outbox()");
+
+        enviar(comando(messageId, saga, os, "GerarOrcamento", "corr-" + saga, itensValidos()), "GerarOrcamento");
+
+        try {
+            await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                    assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR));
+            assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                    Integer.class, messageId)).isZero();
+        } finally {
+            jdbc.execute("drop trigger if exists t_falhar_outbox on outbox");
+        }
+
+        await().atMost(Duration.ofSeconds(20)).until(() -> linhasOutbox(saga) == 1);
+        aguardarFilaVazia();
+        assertThat(jdbc.queryForObject("select tipo from outbox where saga_id = ?", String.class, saga))
+                .isEqualTo("OrcamentoGerado");
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("select count(*) from orcamentos where os_id = ?", Integer.class, os))
+                .isEqualTo(1);
+        assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                && e.getFormattedMessage().contains("Error processing message"));
+    }
+
+    @Test
+    void envelopeSemPayloadLogaErroENaoRegistra() throws Exception {
+        var messageId = UUID.randomUUID();
+        var envelope = envelope(messageId, UUID.randomUUID(), UUID.randomUUID(), "GerarOrcamento", "corr", null);
+
+        enviar(mapper.writeValueAsString(envelope), "GerarOrcamento");
+
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() ->
+                assertThat(new ArrayList<>(logs.list)).anyMatch(e -> e.getLevel() == Level.ERROR
+                        && e.getFormattedMessage().contains("Mensagem invalida")));
+        assertThat(jdbc.queryForObject("select count(*) from mensagens_processadas where message_id = ?",
+                Integer.class, messageId)).isZero();
+    }
+
     private Map<String, Object> itensValidos() {
         var item = new LinkedHashMap<String, Object>();
         item.put("tipo", "SERVICO");

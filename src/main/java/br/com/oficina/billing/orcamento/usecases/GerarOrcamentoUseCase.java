@@ -1,15 +1,20 @@
 package br.com.oficina.billing.orcamento.usecases;
 
+import br.com.oficina.billing.orcamento.entities.ItemOrcamento;
 import br.com.oficina.billing.orcamento.entities.Orcamento;
+import br.com.oficina.billing.orcamento.entities.TipoItem;
 import br.com.oficina.billing.orcamento.gateways.OrcamentoGateway;
 import br.com.oficina.billing.orcamento.gateways.RespostaSagaGateway;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * Gera o orcamento de uma OS e responde a saga.
  * Se a OS ja tem orcamento, repete a resposta OrcamentoGerado com os dados dele (comando reenviado).
- * Itens invalidos geram OrcamentoFalhou, nao uma excecao: a saga precisa da resposta.
+ * Item ou total invalido gera OrcamentoFalhou, nao uma excecao: a saga precisa da resposta.
  */
 public class GerarOrcamentoUseCase {
 
@@ -30,12 +35,48 @@ public class GerarOrcamentoUseCase {
         }
         Orcamento novo;
         try {
-            novo = Orcamento.gerar(cmd.osId(), cmd.sagaId(), cmd.clienteId(), cmd.itens(), Instant.now());
+            novo = Orcamento.gerar(cmd.osId(), cmd.sagaId(), cmd.clienteId(), montarItens(cmd), Instant.now());
         } catch (IllegalArgumentException e) {
             respostas.orcamentoFalhou(cmd.sagaId(), cmd.osId(), e.getMessage());
             return;
         }
         var salvo = orcamentos.salvar(novo);
         respostas.orcamentoGerado(cmd.sagaId(), cmd.osId(), salvo.getId(), salvo.getValorTotal());
+    }
+
+    /** Valor invalido vira IllegalArgumentException. */
+    private static List<ItemOrcamento> montarItens(GerarOrcamentoCommand cmd) {
+        if (cmd.itens() == null) {
+            return List.of();
+        }
+        return cmd.itens().stream().map(i -> new ItemOrcamento(tipo(i.tipo()), uuid(i.referenciaId()),
+                i.descricao(), i.quantidade(), decimal(i.valorUnitario()))).toList();
+    }
+
+    private static TipoItem tipo(String valor) {
+        if (valor == null) {
+            throw new IllegalArgumentException("tipo e obrigatorio");
+        }
+        try {
+            return TipoItem.valueOf(valor);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("tipo invalido: " + valor);
+        }
+    }
+
+    private static UUID uuid(String valor) {
+        try {
+            return UUID.fromString(valor);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("referenciaId invalido");
+        }
+    }
+
+    private static BigDecimal decimal(String valor) {
+        try {
+            return new BigDecimal(valor);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException("valorUnitario invalido");
+        }
     }
 }

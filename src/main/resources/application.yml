@@ -16,8 +16,6 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
-    # V1 arrives in Task 3. Until then the folder has no files.
-    fail-on-missing-locations: false
   cloud:
     aws:
       region:
@@ -55,6 +53,8 @@ management:
       application: billing-service
 
 billing:
+  outbox:
+    intervalo: ${BILLING_OUTBOX_INTERVALO:PT1S}
   filas:
     comandos: ${BILLING_FILAS_COMANDOS:oficina-homolog-billing-commands}
     respostas: ${BILLING_FILAS_RESPOSTAS:oficina-homolog-os-saga-replies}

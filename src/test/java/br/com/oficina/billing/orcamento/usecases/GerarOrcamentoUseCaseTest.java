@@ -124,13 +124,14 @@ class GerarOrcamentoUseCaseTest {
 
     @Test
     void osJaComOrcamentoReenviaGerado() {
-        var existente = Orcamento.gerar(OS, SAGA, CORR, CLIENTE, List.of(new ItemOrcamento(TipoItem.SERVICO,
+        var existente = Orcamento.gerar(OS, SAGA, "corr-guardada", CLIENTE, List.of(new ItemOrcamento(TipoItem.SERVICO,
                 UUID.randomUUID(), "x", 1, new BigDecimal("100.00"))), Instant.now());
         when(orcamentos.buscarPorOsId(OS)).thenReturn(Optional.of(existente));
 
-        useCase.execute(new GerarOrcamentoCommand(SAGA, CORR, OS, CLIENTE, List.of(cru("999.00"))));
+        // O comando reenviado traz outro id de correlacao: o guardado no orcamento vence.
+        useCase.execute(new GerarOrcamentoCommand(SAGA, "corr-do-reenvio", OS, CLIENTE, List.of(cru("999.00"))));
 
-        verify(respostas).orcamentoGerado(SAGA, CORR, OS, existente.getId(), new BigDecimal("100.00"));
+        verify(respostas).orcamentoGerado(SAGA, "corr-guardada", OS, existente.getId(), new BigDecimal("100.00"));
         verify(orcamentos, never()).salvar(any());
     }
 }

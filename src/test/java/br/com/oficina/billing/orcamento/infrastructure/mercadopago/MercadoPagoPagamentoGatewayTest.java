@@ -65,8 +65,7 @@ class MercadoPagoPagamentoGatewayTest {
     }
 
     private MercadoPagoPagamentoGateway gateway(boolean sandbox, Duration leitura, String urlPublica) {
-        var props = new MercadoPagoProperties("real", TOKEN, "segredo", mp.baseUrl(), sandbox,
-                Duration.ofSeconds(2), leitura);
+        var props = new MercadoPagoProperties(TOKEN, mp.baseUrl(), sandbox, Duration.ofSeconds(2), leitura);
         return new MercadoPagoPagamentoGateway(props, urlPublica);
     }
 

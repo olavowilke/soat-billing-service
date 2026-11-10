@@ -66,7 +66,7 @@ public abstract class BillingIT {
         registry.add("spring.cloud.aws.region.static", localstack::getRegion);
         registry.add("spring.cloud.aws.credentials.access-key", localstack::getAccessKey);
         registry.add("spring.cloud.aws.credentials.secret-key", localstack::getSecretKey);
-        registry.add("billing.filas.comandos", () -> FILA_COMANDOS);
+        // billing.filas.comandos vem de application-test.yml (igual a FILA_COMANDOS), para um IT poder trocar a fila.
         registry.add("billing.filas.respostas", () -> FILA_RESPOSTAS);
     }
 

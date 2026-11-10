@@ -44,6 +44,14 @@ class AssinaturaWebhookTest {
     }
 
     @Test
+    void hexEmMaiusculasEhAceito() throws Exception {
+        String valida = assinatura("1");
+        String maiuscula = valida.substring(0, valida.indexOf("v1=") + 3)
+                + valida.substring(valida.indexOf("v1=") + 3).toUpperCase();
+        assertThat(AssinaturaWebhook.valida(maiuscula, REQUEST_ID, "1", SEGREDO)).isTrue();
+    }
+
+    @Test
     void segredoDiferenteRecusa() throws Exception {
         assertThat(AssinaturaWebhook.valida(assinatura("1"), REQUEST_ID, "1", "outro-segredo")).isFalse();
     }

@@ -46,6 +46,10 @@ public class MercadoPagoWebhookController {
         this.processar = processar;
         this.provedor = provedor;
         this.tx = tx;
+        if (segredo == null || segredo.isBlank()) {
+            throw new IllegalStateException("billing.mercadopago.modo=real exige o segredo do webhook: "
+                    + "defina BILLING_MERCADOPAGO_WEBHOOK_SECRET");
+        }
         this.segredo = segredo;
     }
 

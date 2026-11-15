@@ -30,7 +30,7 @@ public class ExpiracaoPagamentosJob {
         try {
             int expirados = expirar.execute(clock.instant());
             if (expirados > 0) {
-                log.info("Pagamentos expirados nesta rodada: {}", expirados);
+                log.info("Pagamentos expirados na rodada do job: {}", expirados);
             }
         } catch (RuntimeException e) {
             // Uma falha (por exemplo, banco fora) nao pode matar o agendador: a proxima rodada tenta de novo.
